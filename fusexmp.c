@@ -25,6 +25,23 @@
 #ifdef HAVE_SETXATTR
 #include <sys/xattr.h>
 #endif
+
+typedef struct _node {
+    char* name;
+    char* hash; // unique name
+    NODE_TYPE type;
+    struct _node ** children;
+    struct _node* parent;
+    int num_children;
+    struct stat attr;
+    int open_count;
+    //char* last_edited_ext;
+} * NODE;
+
+static int xmp_init(struct fuse_conn_info *conn) {
+        return 0;
+}
+
 static int xmp_getattr(const char *path, struct stat *stbuf)
 {
         int res;
@@ -301,6 +318,7 @@ static struct fuse_operations xmp_oper = {
         .chmod          = xmp_chmod,
         .chown          = xmp_chown,
         .truncate       = xmp_truncate,
+        .init           = xmp_init,
 #ifdef HAVE_UTIMENSAT
         .utimens        = xmp_utimens,
 #endif
