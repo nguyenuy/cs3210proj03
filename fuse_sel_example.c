@@ -4,7 +4,7 @@
   gcc -Wall `pkg-config fuse --cflags --libs` hello.c -o hello
 */
 
-#define FUSE_USE_VERSION 26
+#define FUSE_USE_VERSION 29
 
 #include <stdlib.h>
 #include <stdio.h>
