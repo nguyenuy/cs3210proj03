@@ -1,614 +1,562 @@
 /*
-  FUSE: Filesystem in Userspace
-  Copyright (C) 2001-2007  Miklos Szeredi <miklos@szeredi.hu>
-  Copyright (C) 2011       Sebastian Pipping <sebastian@pipping.org>
+ 
 
-  This program can be distributed under the terms of the GNU GPL.
-  See the file COPYING.
-
-  gcc -Wall fusexmp.c `pkg-config fuse --cflags --libs` -o fusexmp
+  gcc -Wall `pkg-config fuse --cflags --libs` hello.c -o hello
 */
 
-#define FUSE_USE_VERSION 26
+#define FUSE_USE_VERSION 29
+#define __USE_XOPEN
+#define _GNU_SOURCE
 
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
-#ifdef linux
-/* For pread()/pwrite()/utimensat() */
-#define _XOPEN_SOURCE 700
-#endif
-
+#include <stdlib.h>
+#include <stdio.h>
 #include <fuse.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <sys/time.h>
-#include <libexif/exif-loader.h>
+#include <libexif/exif-data.h>
+#include <stdbool.h>
+#include <time.h>
 #include <pwd.h>
-#ifdef HAVE_SETXATTR
-#include <sys/xattr.h>
-#endif
+#include <sys/types.h>
+#include <dirent.h>
 
+static int ypfs_rename(const char *from, const char *to);
+char* string_after_char(const char* path, char after);
 
-const int PATH_LEN = 1024;
+typedef enum {NODE_DIR, NODE_FILE} NODE_TYPE; //NODE_DIR == 0 / NODE_FILE == 1
 
-typedef enum {NODE_DIR, NODE_FILE} NODE_TYPE;
-   
-
-struct node{
-  char* path;
-  struct node* parent;
-  struct node* child;
-  struct node* prev;
-  struct node* next;
-};
-
-// getEmptyNode inits a new new node
-static struct node* getEmptyNode(char* path){
-  struct node* p = (struct node*)malloc(sizeof(struct node));
-  p->path = (char*)malloc(PATH_LEN*sizeof(char));
-  strcpy(p->path, path);
-  p->child = NULL;
-  p->prev = NULL;
-  return p;
-
-}
-
-static struct node* ptr = NULL;
-
+typedef struct _node {
+	char* name;
+	char* hash; // unique name for potential duplicate files
+	NODE_TYPE type;
+	struct _node ** children;
+	struct _node* parent;
+	int num_children;
+	struct stat attr;
+	int open_count; //is file currently open 1/0
+} * NODE;
 
 char configdir[256];
 
-// sets the configdir to "/home/user/.pict
-void get_configdir() {
-   struct passwd pw;
-   struct passwd *result;
-   char buf[256];
-   
-   //This function gets the current user's home directory
-   getpwuid_r(getuid(), &pw, buf, 256, &result);
-   
-   strcpy(configdir, pw.pw_dir);
-   strcat(configdir, "/.pict");
-   
-   printf("DEBUG: configdir ==> %s\n", configdir);
+void getConfigDirectory()
+{
+	struct passwd pw;
+	struct passwd *result;
+	char buf[256];
+
+	getpwuid_r(getuid(), &pw, buf, 256, &result); //should be thread-safe
+	strcpy(configdir, pw.pw_dir); //base directory
+	strcat(configdir, "/.mypics");  //hidden representation on user home directory
 }
 
-char* fullFileName(char* part){
-  char* full = (char*)malloc(PATH_LEN);
-  memset(full, 0, PATH_LEN);
-  strcat(full, configdir);
-  strcat(full, "/");
-  strcat(full,part);
-  return full;
+/*
+ * Root of file system
+ */
+static NODE root;
 
-}
+NODE init_node(const char* name, NODE_TYPE type, char* hash)
+{
+	NODE temp = malloc(sizeof(struct _node)); //allocate space for a temp node
+	
+	temp->name = malloc(sizeof(char) * (strlen(name) + 1)); //malloc space for the name
+	strcpy(temp->name, name); //userspace strcpy, I'm so happy to see you again
+	
+	temp->type = type;
+	temp->children = NULL; //new node, no children pointers yet
+	temp->num_children = 0; //^
+	temp->open_count = 0; //'file' current not open
+	temp->hash = NULL; //initialize temp hash pointer
 
-
-void printDate(ExifData* ed, char* y, char* m){
-  char buf[PATH_LEN];
-  struct tm file_time;
-  char new_name[2048];
-  char month[1024];
-  char year[1024];
-  if(ed){
-    ExifEntry* entry = exif_content_get_entry(ed->ifd[EXIF_IFD_0], EXIF_TAG_DATE_TIME);
-    exif_entry_get_value(entry, buf, sizeof(buf));
-    strptime(buf, "%Y:%m:%d %H:%M:%S", &file_time);
-    strftime(year, 1024, "%Y", &file_time);
-    strftime(month, 1024, "%B", &file_time);
-    //sprintf(new_name, "/%s/%s/%s", year, month, file_node->name);
-    //printf("month of %s and year of %s\n", month, year);
-    strcpy(y, year);
-    strcpy(m, month);
-    exif_data_unref(ed);
-  }
-
-}
-
-static void xmp_init(struct fuse_conn_info* conn){
-  //ptr will contain the root
-  ptr = getEmptyNode("/");
-  struct node* p1 = getEmptyNode("/dogs");
-  struct node* p2 = getEmptyNode("/cats");
-  ptr->child = p1;
-  p1->parent = ptr;
-  p1->next = p2;
-  p2->prev = p1;
-  p2->parent = ptr;
-
-  struct node* q1 = getEmptyNode("/myDog.jpg");
-  struct node* q2 = getEmptyNode("/superDog.jpg");
-  p1->child = q1;
-  q1->parent = p1;
-  q2->parent = p1;
-  q1->next = q2;
-  q2->prev = q1;
-  
-  // 1. configdir is the picture vault, dir with metadata managed by Linux
-  get_configdir();
-  printf("DEBUG: mkdir ==> %d\n", mkdir(configdir, 0777));
-  
-  // 2. Get file listing from picture vault
-  DIR *dirStream;
-  struct dirent *dp;
-  struct dirent *d_entries;
-  struct dirent *more_d_entries;
-  int num_entries = 0;
-  int j;
-   
-  dirStream = opendir(configdir);
-  if (dirStream == NULL) {
-     printf("DEBUG: Could not open configdir: %s",configdir);
-     return;
-  }
-  
-  d_entries = calloc(1,sizeof(struct dirent));
-  do {
-     dp = readdir(dirStream);
-     if (dp != NULL) {
-        d_entries[num_entries] = *dp;
-        num_entries++;
-        // realloc is a little dirty. see next debug printout
-        more_d_entries = realloc(d_entries, 2 + num_entries);
-        if (more_d_entries != NULL) {
-           d_entries = more_d_entries;
-        } else {
-           free(d_entries);
-           puts("DEBUG: Error re-allocating memory");
-        }
-        
-        printf("DEBUG: File in .pict directory: %s\n",dp->d_name);
-	//printf("DEBUG: inode is %d\n", dp->d_ino);
-	if(strcmp(dp->d_name, ".") != 0 && strcmp(dp->d_name, "..")!=0){
-	  char* fullpath = fullFileName(dp->d_name);
-	  printf("the file is %s\n", fullpath);
-	  ExifData *ed = exif_data_new_from_file(fullpath);
-	  char month[PATH_LEN];
-	  char year[PATH_LEN];
-	  printDate(ed,month, year);
-	  printf("year of %s and month of %s\n", year, month);
+	if (type == NODE_FILE && hash == NULL) { //if it's a file, and doesn't have a hash yet
+		temp->hash = malloc(sizeof(char) * 100); //make space for 100 bytes
+		sprintf(temp->hash, "%lld", random() % 100000000000000); //hash = huge random number
 	}
-     }
-  } while (dp != NULL);    
-   
-  /*
-  for (j = 0; j < num_entries; j++) {
-     printf("DEBUG: d_entries[%d] ==> %s\n",j, d_entries[j].d_name);
-  }
-  */
+
+	if (type == NODE_FILE && hash) { //if it's a file and it DOES have a hash
+		temp->hash = malloc(sizeof(char) * 100); //allocate some space for temp hash
+		sprintf(temp->hash, "%s", hash); //put the hash in the temp node
+
+	}
+
+
+	return temp;
 }
 
-static int xmp_getattr(const char *path, struct stat *stbuf)
+NODE addChild(NODE parent, NODE child)
 {
-	int res;
+	struct _node **old_children = parent->children; //preserve the old children pointer
+	int old_num = parent->num_children; //preserve the old count
+	
+	struct _node **new_children = malloc(sizeof(NODE) * (old_num + 1)); //going to need space for 1 more child
 
-	res = lstat(path, stbuf);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int xmp_access(const char *path, int mask)
-{
-	int res;
-
-	res = access(path, mask);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int xmp_readlink(const char *path, char *buf, size_t size)
-{
-	int res;
-
-	res = readlink(path, buf, size - 1);
-	if (res == -1)
-		return -errno;
-
-	buf[res] = '\0';
-	return 0;
-}
-
-struct node* searchChild(struct node* curr,char* path){
-  if(curr == NULL)
-    return NULL;
-  struct node* p = curr->child; // return p
-  while(p != NULL){
-    if(strcmp(p->path, path) == 0)
-      break;
-    p = p->next;
-  }
-  return p;
-}
-
-void printNode(struct node* p){
-  if(p == NULL)
-    printf("node for DBG is NULL\n");
-  else
-    printf("node for DBG is %s\n", p->path);
-}
-
-struct node* gotoNode(char* path){
-  struct node* p = ptr->child; // return the p
-  char buf[PATH_LEN];
-  strcpy(buf,path);
-  
-  
-  char* q = strtok(buf,"/");
-  if(q == NULL)
-    return ptr->child;
-
-  while(q != NULL){
-    p = p->child;
-    printNode(p);
-    q = strtok(NULL,"/");
-    
-  }
-
-  return p;
-}
-static int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-		       off_t offset, struct fuse_file_info *fi)
-{
-	char name[PATH_LEN];
 	int i;
+	for (i = 0; i < old_num; i++) {
+		new_children[i] = old_children[i]; //copy the old children to the new children pointer
+	}
 
+	new_children[old_num] = child; //set the last entry to the newest child
+
+	parent->children = new_children; //fix the children pointer
+	parent->num_children = old_num + 1; //fix the parent's children count
+
+	child->parent = parent; //set its parent
+
+	free(old_children); //since we malloc'd new space for all the old children too, we can free this now
+
+	return child;
+}
+
+void deleteChild(NODE parent, NODE child)
+{
+	struct _node **old_children = parent->children; //preserve the old children pointer
+	int old_num = parent->num_children; //preserve the old count
+	
+	struct _node **new_children;
+	int i;
+	if (old_num <= 0) //if it has no children, we can't remove anything
+		return;
+
+	new_children = malloc(sizeof(NODE) * (old_num - 1)); //allocate a new smaller space for the old children
+
+	int new_index = 0;
+	for (i = 0; i < old_num; i++) { //loop over all the children, and only add them to the new pointer if they're not the one we want to remove
+		if (old_children[i] != child) {
+			new_children[new_index++] = old_children[i];
+		}
+	}
+
+	parent->children = new_children; //fix the parent's children pointer
+	parent->num_children = old_num - 1; //fix the parent's children count
+	
+	//free all the memory we've been using
+	//if statements serve to prevent freeing null pointers
+	
+	if (old_children) //free old children first since the array is no longer needed
+		free(old_children);
+	if (child->name) //we're removing this child, so free all of its attributes that need freeing
+		free(child->name);
+	if (child->hash)
+		free(child->hash);
+	if (child)
+		free(child);
+}
+
+void deleteNode(NODE temp) //makes life easier later to just call this function
+{
+	deleteChild(temp->parent, temp); //call the deleteChild on the child of the child's parent, which is the child. Confusing.
+}
+
+void getFullPath(const char* path, char* full)  //get the full path, again, just makes life easier
+{
+	sprintf(full, "%s/%s", configdir, path);
+}
+
+NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* hash, bool ignore_ext) //function to use for 'overloading'
+{
+
+	char name[1000];
+	int i = 0;
+	bool last_node = false;
+	char* ext;
+	char compare_name[1024];
+	char* curr_char;
+	int n = 0;
+
+	if (curr == NULL)
+      puts("DEBUG: _node_for_path: curr == NULL");
+	
+	ext = string_after_char(path, '.'); //neat function that 
+
+	if (*path == '/')
+		path++;
+	
+
+	i = 0;
+	while(*path && *path != '/' && ( ext == NULL || (path < ext-1 || !ignore_ext))) {
+		name[i++] = *(path++);
+	}
+	name[i] = '\0';
+	
+
+	if (*path == '\0')
+		last_node = true;
+
+	if (i == 0) {
+		return curr;
+	}
+
+	for (i = 0; i < curr->num_children; i++) {
+		ext = string_after_char(curr->children[i]->name, '.');
+		curr_char = curr->children[i]->name;
+		n = 0;
+		while(*curr_char != '\0' && (ext == NULL || (!ignore_ext || curr_char < ext-1))) {
+			compare_name[n++] = *(curr_char++);
+		}
+		compare_name[n] = '\0';
+		if (0 == strcmp(name, compare_name))
+			return _node_for_path(path, curr->children[i], create, type, hash, ignore_ext);
+		*compare_name = '\0';
+	}
+
+	
+	// sorry about this weird line
+	if (create) {
+		return _node_for_path(path, addChild(curr, init_node(name, last_node ? type : NODE_DIR, hash)), create, type, hash, ignore_ext);
+	}
+
+	return NULL;
+}
+
+NODE node_for_path(const char* path) 
+{
+        return _node_for_path((char*)path, root, false, 0, NULL, false);
+}
+
+NODE create_node_for_path(const char* path, NODE_TYPE type, char* hash)
+{
+	return _node_for_path((char*)path, root, true, type, hash, false);
+}
+
+NODE node_ignore_extension(const char* path)
+{
+	return _node_for_path((char*)path, root, false, 0, NULL, true);
+}
+
+char* string_after_char(const char* path, char after)
+{
+	char* end = (char*)path;
+	while (*end) end++;
+	while(end > path && *end != after) end--;
+	if (end != path || *end == after)
+		return end + 1;
+
+	return NULL;
+}
+
+
+// from example
+static int ypfs_getattr(const char *path, struct stat *stbuf)
+{
+	int res = 0;
+	NODE file_node;
+	NODE file_node_ignore_ext;
+	char full_file_name[1000];
+
+	puts("DEBUG: getattr");
+
+	file_node = node_for_path(path);
+	file_node_ignore_ext = node_ignore_extension(path);
+	if (file_node_ignore_ext == NULL)
+		return -ENOENT;
+	getFullPath(file_node_ignore_ext->hash, full_file_name);
+
+	if (file_node_ignore_ext && file_node_ignore_ext->type == NODE_FILE && file_node_ignore_ext != file_node) {
+		// convert here, so file 1324242 becomes 1324242.png
+		puts("DEBUG: EXTENSION DOESN'T MATCH; NEED TO CONVERT");
+		//convert_img(file_node_ignore_ext, path);
+		// for stat later in function
+		strcat(full_file_name, ".");
+		strcat(full_file_name, string_after_char(path, '.'));
+		printf("DEBUG: full_file_name ==> %s\n", full_file_name);
+	}
+
+
+	memset(stbuf, 0, sizeof(struct stat));
+	if (file_node_ignore_ext->type == NODE_DIR) { //if (strcmp(path, "/") == 0
+		stbuf->st_mode = S_IFDIR | 0444;
+		stbuf->st_nlink = 2;
+	} else if (file_node_ignore_ext != NULL && file_node != file_node_ignore_ext) {
+		puts("DEBUG: getattr for non-original file ext");
+		stat(full_file_name, stbuf);
+		stbuf->st_mode = S_IFREG | 0444;
+	} else if (file_node_ignore_ext != NULL) {
+		printf("DEBUG: full_file_name ==> %s\n", full_file_name);
+		stat(full_file_name, stbuf);
+	} else
+		res = -ENOENT;
+
+	return res;
+}
+
+static int ypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+			 off_t offset, struct fuse_file_info *fi)
+{
+	int i;
 	(void) offset;
 	(void) fi;
+	NODE file_node;
+	file_node = node_for_path(path);
+	puts("DEBUG: readdir");
+	if (file_node == NULL)
+		return -ENOENT;
 
-	//if (strcmp(path, "/") != 0)
-	//  return -ENOENT;
-
-	struct node* p = gotoNode(path);
-	printf("DBG: p returns %s\n\n", p->path);
-	if(p == NULL)
-	  return -ENOENT;
-	while(p != NULL){
-	  //strcpy(name,p->path);
-	  if(p->parent == ptr){
-	    filler(buf, (p->path+1), NULL, 0);
-	    printf("filler %s\n", p->path+1);
-	  }else{
-	    filler(buf,p->path+1, NULL, 0);
-	    printf("filler %s\n", p->path+1);
-	  }
-	  p = p->next;
+	filler(buf, ".", NULL, 0);
+	filler(buf, "..", NULL, 0);
+	
+	for (i = 0; i < file_node->num_children; i++) {
+		filler(buf, file_node->children[i]->name, NULL, 0);
 	}
 
-	/**
-	for (i = 0; i < FSEL_FILES; i++) {
-	  
-	  //name[0] = fsel_hex_map[i];
-	  filler(buf, name, NULL, 0);
+	return 0;
+}
+
+// from example
+static int ypfs_open(const char *path, struct fuse_file_info *fi)
+{
+	NODE file_node;
+	char full_file_name[1000];
+
+	puts("DEBUG: open");
+
+
+	file_node = node_ignore_extension(path);
+
+	if (file_node == NULL)  
+		        return -ENOENT;
+
+	getFullPath(file_node->hash, full_file_name);
+
+	// different extensions
+	if (strcmp(string_after_char(path, '.'), string_after_char(file_node->name, '.'))) {
+		strcat(full_file_name, ".");
+		strcat(full_file_name, string_after_char(path, '.'));
 	}
-	**/
-	return 0;
-}
 
-static int xmp_mknod(const char *path, mode_t mode, dev_t rdev)
-{
-	int res;
+	fi->fh = open(full_file_name, fi->flags, 0666); //Owner read/write
 
-	/* On Linux this could just be 'mknod(path, mode, rdev)' but this
-	   is more portable */
-	if (S_ISREG(mode)) {
-		res = open(path, O_CREAT | O_EXCL | O_WRONLY, mode);
-		if (res >= 0)
-			res = close(res);
-	} else if (S_ISFIFO(mode))
-		res = mkfifo(path, mode);
-	else
-		res = mknod(path, mode, rdev);
-	if (res == -1)
-		return -errno;
+	if(fi->fh == -1) {
+	        puts("DEBUG: fd == -1");
+	        return -errno;
+	}
+
+	file_node->open_count++;
+
+
+
 
 	return 0;
 }
 
-static int xmp_mkdir(const char *path, mode_t mode)
+// from example
+static int ypfs_read(const char *path, char *buf, size_t size, off_t offset,
+		      struct fuse_file_info *fi)
 {
-	int res;
-
-	res = mkdir(path, mode);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int xmp_unlink(const char *path)
-{
-	int res;
-
-	res = unlink(path);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int xmp_rmdir(const char *path)
-{
-	int res;
-
-	res = rmdir(path);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int xmp_symlink(const char *from, const char *to)
-{
-	int res;
-
-	res = symlink(from, to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int xmp_rename(const char *from, const char *to)
-{
-	int res;
-
-	res = rename(from, to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int xmp_link(const char *from, const char *to)
-{
-	int res;
-
-	res = link(from, to);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int xmp_chmod(const char *path, mode_t mode)
-{
-	int res;
-
-	res = chmod(path, mode);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int xmp_chown(const char *path, uid_t uid, gid_t gid)
-{
-	int res;
-
-	res = lchown(path, uid, gid);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-static int xmp_truncate(const char *path, off_t size)
-{
-	int res;
-
-	res = truncate(path, size);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-
-#ifdef HAVE_UTIMENSAT
-static int xmp_utimens(const char *path, const struct timespec ts[2])
-{
-	int res;
-
-	/* don't use utime/utimes since they follow symlinks */
-	res = utimensat(0, path, ts, AT_SYMLINK_NOFOLLOW);
-	if (res == -1)
-		return -errno;
-
-	return 0;
-}
-#endif
-
-static int xmp_open(const char *path, struct fuse_file_info *fi)
-{
-	int res;
-
-	res = open(path, fi->flags);
-	if (res == -1)
-		return -errno;
-
-	close(res);
-	return 0;
-}
-
-static int xmp_read(const char *path, char *buf, size_t size, off_t offset,
-		    struct fuse_file_info *fi)
-{
-	int fd;
-	int res;
-
 	(void) fi;
-	fd = open(path, O_RDONLY);
-	if (fd == -1)
-		return -errno;
+	NODE file_node;
+	puts("DEBUG: read");
 
-	res = pread(fd, buf, size, offset);
-	if (res == -1)
+	file_node = node_ignore_extension(path);
+
+	if (file_node == NULL)
+		return -ENOENT;
+
+	size = pread(fi->fh, buf, size, offset);
+	
+	if (size < 0)
+		puts("DEBUG: read error");
+
+	return size;
+}
+
+static int ypfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
+{
+	NODE new_node;
+	char* end = (char*)path;
+	char* urls[128];
+	int num_urls;
+	int i;
+	int num_slashes = 0;
+
+	while(*end != '\0') end++;
+	while(*end != '/' && end >= path) end--;
+	if (*end == '/') end++;
+
+	for(i = 0; i < strlen(path); i++) {
+		if (path[i] == '/') num_slashes++;
+	}
+	
+	// no writing to non-root folders
+	if (num_slashes > 1 ) {
+		return -1;
+	}
+
+	new_node = init_node(end, NODE_FILE, NULL);
+	puts("DEBUG: create");
+	addChild(root, new_node);
+	return ypfs_open(path, fi);
+}
+
+static int ypfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+
+	int res;
+	char full_file_name[1000];
+	NODE file_node = node_ignore_extension(path);
+	NODE real_node = node_for_path(path);
+	puts("DEBUG: write");
+	getFullPath(file_node->hash, full_file_name);
+	printf("DEBUG: full_file_name ==> %s\n", full_file_name);
+
+	if (file_node != real_node)
+		return -1;
+
+	res = pwrite(fi->fh, buf, size, offset);
+	if(res == -1) {
+		puts("DEBUG: pwrite error");
 		res = -errno;
+	}
 
-	close(fd);
+
 	return res;
 }
 
-static int xmp_write(const char *path, const char *buf, size_t size,
-		     off_t offset, struct fuse_file_info *fi)
+static int ypfs_release(const char *path, struct fuse_file_info *fi)
 {
-	int fd;
-	int res;
+	ExifData *ed;
+	ExifEntry *entry;
+	char full_file_name[1000];
+	NODE file_node = node_ignore_extension(path);
+	char buf[1024];
+	struct tm file_time;
+	char year[1024];
+	char month[1024];
+	char new_name[2048];
 
-	(void) fi;
-	fd = open(path, O_WRONLY);
-	if (fd == -1)
-		return -errno;
+	puts("DEBUG: release");
 
-	res = pwrite(fd, buf, size, offset);
-	if (res == -1)
-		res = -errno;
+	getFullPath(file_node->hash, full_file_name);
+	close(fi->fh);
+	file_node->open_count--;
 
-	close(fd);
-	return res;
-}
+	// redetermine where the file goes
+	if (file_node->open_count <= 0) {
+		puts("DEBUG: file completely closed; checking if renaming necessary");
+		ed = exif_data_new_from_file(full_file_name);
+		if (ed) {
+			entry = exif_content_get_entry(ed->ifd[EXIF_IFD_0], EXIF_TAG_DATE_TIME);
+			exif_entry_get_value(entry, buf, sizeof(buf));
+			puts("DEBUG: Tag content:");
+			printf("DEBUG: buf ==> %s\n", buf);
+			strptime(buf, "%Y:%m:%d %H:%M:%S", &file_time);
+			strftime(year, 1024, "%Y", &file_time);
+			strftime(month, 1024, "%B", &file_time);
+			sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
+			printf("DEBUG: new_name ==> %s\n", new_name);
+			ypfs_rename(path, new_name);
+			exif_data_unref(ed);
+		} else {
+			int num_slashes = 0;
+			int i;
+			time_t rawtime;
 
-static int xmp_statfs(const char *path, struct statvfs *stbuf)
-{
-	int res;
+			for (i = 0; i < strlen(path); i++) {
+				if (path[i] == '/')
+					num_slashes++;
+			}
+			
+			// if path only has 1 slash, then we're inside of the 'root' folder
+			if (num_slashes == 1) {
+				struct tm * now_time;
+				time(&rawtime);
+				now_time = localtime(&rawtime);
+				strftime(year, 1024, "%Y", now_time);
+				strftime(month, 1024, "%B", now_time);
+				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
+				printf("DEBUG: new_name ==> %s\n", new_name);
+				ypfs_rename(path, new_name);
 
-	res = statvfs(path, stbuf);
-	if (res == -1)
-		return -errno;
+			}
+		}
+	}
 
 	return 0;
 }
 
-static int xmp_release(const char *path, struct fuse_file_info *fi)
+static int ypfs_unlink(const char *path)
 {
-	/* Just a stub.	 This method is optional and can safely be left
-	   unimplemented */
+	char full_file_name[1000];
+	NODE file_node = node_for_path(path);
+	puts("DEBUG: unlink");
+	getFullPath(file_node->hash, full_file_name);
 
-	(void) path;
-	(void) fi;
+	deleteNode(file_node);
+
+	return unlink(full_file_name);
+}
+
+static int ypfs_rename(const char *from, const char *to)
+{
+	NODE old_node;
+	NODE new_node;
+	char* end = (char*)to;
+	puts("DEBUG: rename");
+
+	old_node = node_for_path(from);
+
+	while(*end != '\0') end++;
+	while(*end != '/' && end >= to) end--;
+	if (*end == '/') end++;
+	
+	
+	new_node = create_node_for_path(to, old_node->type, old_node->hash);
+	puts("DEBUG: test 1");
+	if (new_node != old_node)
+		deleteNode(old_node);
+
+	puts("DEBUG: test 2");
 	return 0;
+
 }
 
-static int xmp_fsync(const char *path, int isdatasync,
-		     struct fuse_file_info *fi)
+static int ypfs_mkdir(const char *path, mode_t mode) //mkdir not permitted inside the FS to preserve folder integrity
 {
-	/* Just a stub.	 This method is optional and can safely be left
-	   unimplemented */
 
-	(void) path;
-	(void) isdatasync;
-	(void) fi;
-	return 0;
+	puts("DEBUG: mkdir called");
+	return -1;
 }
 
-#ifdef HAVE_POSIX_FALLOCATE
-static int xmp_fallocate(const char *path, int mode,
-			off_t offset, off_t length, struct fuse_file_info *fi)
+static int ypfs_opendir(const char *path, struct fuse_file_info *fi)
 {
-	int fd;
-	int res;
+	NODE node = node_for_path(path);
+	puts("DEBUG: opendir");
 
-	(void) fi;
+	if (node && node->type == NODE_DIR) //if the filetype is a directory, open it!
+		return 0;
 
-	if (mode)
-		return -EOPNOTSUPP;
-
-	fd = open(path, O_WRONLY);
-	if (fd == -1)
-		return -errno;
-
-	res = -posix_fallocate(fd, offset, length);
-
-	close(fd);
-	return res;
+	return -1; //trying to open a directory that isn't a directory won't work
 }
-#endif
 
-#ifdef HAVE_SETXATTR
-/* xattr operations are optional and can safely be left unimplemented */
-static int xmp_setxattr(const char *path, const char *name, const char *value,
-			size_t size, int flags)
+static void* ypfs_init(struct fuse_conn_info *conn)
 {
-	int res = lsetxattr(path, name, value, size, flags);
-	if (res == -1)
-		return -errno;
-	return 0;
+	return NULL;
 }
 
-static int xmp_getxattr(const char *path, const char *name, char *value,
-			size_t size)
-{
-	int res = lgetxattr(path, name, value, size);
-	if (res == -1)
-		return -errno;
-	return res;
-}
-
-static int xmp_listxattr(const char *path, char *list, size_t size)
-{
-	int res = llistxattr(path, list, size);
-	if (res == -1)
-		return -errno;
-	return res;
-}
-
-static int xmp_removexattr(const char *path, const char *name)
-{
-	int res = lremovexattr(path, name);
-	if (res == -1)
-		return -errno;
-	return 0;
-}
-#endif /* HAVE_SETXATTR */
-
-static struct fuse_operations xmp_oper = {
-	.init       = xmp_init,
-	.getattr	= xmp_getattr,
-	.access		= xmp_access,
-	.readlink	= xmp_readlink,
-	.readdir	= xmp_readdir,
-	.mknod		= xmp_mknod,
-	.mkdir		= xmp_mkdir,
-	.symlink	= xmp_symlink,
-	.unlink		= xmp_unlink,
-	.rmdir		= xmp_rmdir,
-	.rename		= xmp_rename,
-	.link		= xmp_link,
-	.chmod		= xmp_chmod,
-	.chown		= xmp_chown,
-	.truncate	= xmp_truncate,
-#ifdef HAVE_UTIMENSAT
-	.utimens	= xmp_utimens,
-#endif
-	.open		= xmp_open,
-	.read		= xmp_read,
-	.write		= xmp_write,
-	.statfs		= xmp_statfs,
-	.release	= xmp_release,
-	.fsync		= xmp_fsync,
-#ifdef HAVE_POSIX_FALLOCATE
-	.fallocate	= xmp_fallocate,
-#endif
-#ifdef HAVE_SETXATTR
-	.setxattr	= xmp_setxattr,
-	.getxattr	= xmp_getxattr,
-	.listxattr	= xmp_listxattr,
-	.removexattr	= xmp_removexattr,
-#endif
+static struct fuse_operations ypfs_oper = {
+	.getattr	= ypfs_getattr,
+	.readdir	= ypfs_readdir,
+	.open		= ypfs_open,
+	.read		= ypfs_read,
+	.create		= ypfs_create,
+	.write		= ypfs_write,
+	.release	= ypfs_release,
+	.unlink		= ypfs_unlink,
+	.rename		= ypfs_rename,
+	.mkdir		= ypfs_mkdir,
+	.opendir	= ypfs_opendir,
+	.init		= ypfs_init,
 };
 
 int main(int argc, char *argv[])
 {
-	umask(0);
-	return fuse_main(argc, argv, &xmp_oper, NULL);
+	puts("DEBUG: ===========start_filesystem============");
+	srandom(time(NULL));
+	getConfigDirectory();
+	printf("mkdir configdir: %d\n", mkdir(configdir, 0777));
+	root = init_node("/", NODE_DIR, NULL);
+	
+	return fuse_main(argc, argv, &ypfs_oper, NULL);
 }
