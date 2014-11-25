@@ -260,7 +260,6 @@ struct node* gotoNode(char* path){
 static int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
 {
-	/char name[2] = { };
 	char name[PATH_LEN];
 	int i;
 

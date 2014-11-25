@@ -8,6 +8,9 @@ all: $(targets)
 hello: fuse_sel_example.c
 	$(CC) -o $@ $< $(CFLAGS) $(LDFLAGS)
 
+mypfs: mypfs.c
+	$(CC) -o $@ $< $(CFLAGS) $(LDFLAGS)
+
 ypfs: ypfs.c
 	$(CC) -o $@ $< $(CFLAGS) $(LDFLAGS)
 
