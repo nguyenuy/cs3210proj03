@@ -54,6 +54,17 @@ void getConfigDirectory()
 	strcat(configdir, "/.ypfs");  //add the .ypfs
 }
 
+char* string_after_char(const char* path, char after) //gets all characters in a string after a certain 'marking' char (used for extensions here)
+{
+	char* end = (char*)path;
+	while (*end) end++;
+	while(end > path && *end != after) end--;
+	if (end != path || *end == after)
+		return end + 1;
+
+	return NULL;
+}
+
 
 void logStuff(const char* log_str) //logging function for debugging purposes
 {
@@ -239,17 +250,6 @@ NODE node_ignore_extension(const char* path)
 	return _node_for_path((char*)path, root, false, 0, NULL, true);
 }
 
-char* string_after_char(const char* path, char after)
-{
-	char* end = (char*)path;
-	while (*end) end++;
-	while(end > path && *end != after) end--;
-	if (end != path || *end == after)
-		return end + 1;
-
-	return NULL;
-}
-
 
 // from example
 static int ypfs_getattr(const char *path, struct stat *stbuf)
@@ -347,10 +347,7 @@ static int ypfs_open(const char *path, struct fuse_file_info *fi)
 	}
 
 	file_node->open_count++;
-
-
-
-
+	
 	return 0;
 }
 

@@ -146,15 +146,15 @@ void deleteNode(NODE temp) //makes life easier later to just call this function
 }
 
 
-char* string_after_char(const char* path, char after)
+char* string_after_char(const char* path, char after) //quick function used to grab extensions from file paths
 {
 	char* end = (char*)path;
-	while (*end) end++;
-	while(end > path && *end != after) end--;
+	while (*end) end++; //set end to the end of the string
+	while(end > path && *end != after) end--; //once it's at the end, go backwards until you reach the character we want to "stop" at
 	if (end != path || *end == after)
 		return end + 1;
 
-	return NULL;
+	return NULL; //something went wrong
 }
 
 
@@ -177,7 +177,7 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* un
 	if (curr == NULL)
       puts("DEBUG: _node_for_path: curr == NULL");
 	
-	ext = string_after_char(path, '.'); //neat function that 
+	ext = string_after_char(path, '.'); //grab the extension using the string_after_char function from earlier
 
 	if (*path == '/')
 		path++;
@@ -219,6 +219,8 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* un
 	return NULL;
 }
 
+//_node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* unique_id, bool ignore_ext)
+
 NODE node_for_path(const char* path) 
 {
         return _node_for_path((char*)path, root, false, 0, NULL, false);
@@ -235,20 +237,19 @@ NODE node_ignore_extension(const char* path)
 }
 
 
-// from example
-static int mypfs_getattr(const char *path, struct stat *stbuf)
+// from a fuse example
+static int mypfs_getattr(const char *path, struct stat *stbuf) //grabbing the file attributes we need
 {
 	int res = 0;
 	NODE file_node;
 	NODE file_node_ignore_ext;
 	char full_file_name[1000];
 
-	puts("DEBUG: getattr");
-
 	file_node = node_for_path(path);
 	file_node_ignore_ext = node_ignore_extension(path);
 	if (file_node_ignore_ext == NULL)
 		return -ENOENT;
+		
 	getFullPath(file_node_ignore_ext->unique_id, full_file_name);
 
 	if (file_node_ignore_ext && file_node_ignore_ext->type == NODE_FILE && file_node_ignore_ext != file_node) {
@@ -286,16 +287,17 @@ static int mypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	(void) offset;
 	(void) fi;
 	NODE file_node;
-	file_node = node_for_path(path);
-	puts("DEBUG: readdir");
+	
+	file_node = node_for_path(path); //get the node for a given file path
+	
 	if (file_node == NULL)
 		return -ENOENT;
 
-	filler(buf, ".", NULL, 0);
-	filler(buf, "..", NULL, 0);
+	filler(buf, ".", NULL, 0);  //grabbed from the example (hello.c)
+	filler(buf, "..", NULL, 0); //grabbed from the example (hello.c)
 	
 	for (i = 0; i < file_node->num_children; i++) {
-		filler(buf, file_node->children[i]->name, NULL, 0);
+		filler(buf, file_node->children[i]->name, NULL, 0); //put the node's "children" aka subdirectories into buf
 	}
 
 	return 0;
@@ -306,9 +308,6 @@ static int mypfs_open(const char *path, struct fuse_file_info *fi)
 {
 	NODE file_node;
 	char full_file_name[1000];
-
-	puts("DEBUG: open");
-
 
 	file_node = node_ignore_extension(path);
 
@@ -332,9 +331,6 @@ static int mypfs_open(const char *path, struct fuse_file_info *fi)
 
 	file_node->open_count++;
 
-
-
-
 	return 0;
 }
 
@@ -344,7 +340,6 @@ static int mypfs_read(const char *path, char *buf, size_t size, off_t offset,
 {
 	(void) fi;
 	NODE file_node;
-	puts("DEBUG: read");
 
 	file_node = node_ignore_extension(path);
 
@@ -354,7 +349,7 @@ static int mypfs_read(const char *path, char *buf, size_t size, off_t offset,
 	size = pread(fi->fh, buf, size, offset);
 	
 	if (size < 0)
-		puts("DEBUG: read error");
+		puts("Debug: READ ERROR");
 
 	return size;
 }
@@ -392,8 +387,10 @@ static int mypfs_write(const char *path, const char *buf, size_t size, off_t off
 
 	int res;
 	char full_file_name[1000];
+	
 	NODE file_node = node_ignore_extension(path);
 	NODE real_node = node_for_path(path);
+	
 	puts("DEBUG: write");
 	getFullPath(file_node->unique_id, full_file_name);
 	printf("DEBUG: full_file_name ==> %s\n", full_file_name);
@@ -420,38 +417,44 @@ static int mypfs_rename(const char *from, const char *to)
 	puts("DEBUG: rename");
 
 	old_node = node_for_path(from);
-
-	while(*end != '\0') end++;
-	while(*end != '/' && end >= to) end--;
-	if (*end == '/') end++;
 	
 	
 	new_node = create_node_for_path(to, old_node->type, old_node->unique_id);
-	puts("DEBUG: test 1");
-	if (new_node != old_node)
+	
+	if (new_node != old_node) //making sure the user isn't renaming the file to the same name
 		deleteNode(old_node);
-
-	puts("DEBUG: test 2");
+		
 	return 0;
 
 }
 
-static int mypfs_release(const char *path, struct fuse_file_info *fi)
+
+/*
+From the Fuse documentation:
+
+"Release is called when there are no more references to an open file: 
+all file descriptors are closed and all memory mappings are unmapped.
+
+For every open() call there will be exactly one release() call 
+with the same flags and file descriptor."
+
+*/
+static int mypfs_release(const char *path, struct fuse_file_info *fi) //basically, this is where the magic happens in terms of directory sorting
 {
-	ExifData *ed;
+	ExifData *ed; //temp var for the ExifData we need to pull from the image
 	ExifEntry *entry;
+	
 	char full_file_name[1000];
 	NODE file_node = node_ignore_extension(path);
+	
 	char buf[1024];
 	struct tm file_time;
 	char year[1024];
 	char month[1024];
 	char new_name[2048];
 
-	puts("DEBUG: release");
-
 	getFullPath(file_node->unique_id, full_file_name);
-	close(fi->fh);
+	close(fi->fh); //from Fuse documentation: "fi->fh will contain the value set by the open method"
 	file_node->open_count--;
 
 	// redetermine where the file goes
@@ -461,8 +464,7 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi)
 		if (ed) {
 			entry = exif_content_get_entry(ed->ifd[EXIF_IFD_0], EXIF_TAG_DATE_TIME);
 			exif_entry_get_value(entry, buf, sizeof(buf));
-			puts("DEBUG: Tag content:");
-			printf("DEBUG: buf ==> %s\n", buf);
+			
 			strptime(buf, "%Y:%m:%d %H:%M:%S", &file_time);
 			strftime(year, 1024, "%Y", &file_time);
 			strftime(month, 1024, "%B", &file_time);
@@ -488,7 +490,6 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi)
 				strftime(year, 1024, "%Y", now_time);
 				strftime(month, 1024, "%B", now_time);
 				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
-				printf("DEBUG: new_name ==> %s\n", new_name);
 				mypfs_rename(path, new_name);
 
 			}
@@ -512,8 +513,6 @@ static int mypfs_unlink(const char *path)
 
 static int mypfs_mkdir(const char *path, mode_t mode) //mkdir not permitted inside the FS to preserve folder integrity
 {
-
-	puts("DEBUG: mkdir called");
 	return -1;
 }
 
