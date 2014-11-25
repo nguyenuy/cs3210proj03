@@ -9,7 +9,7 @@ hello: fuse_sel_example.c
 	$(CC) -o $@ $< $(CFLAGS) $(LDFLAGS)
 
 mypfs: mypfs.c
-	$(CC) -o $@ $< $(CFLAGS) $(LDFLAGS)
+	$(CC) -o $@ $< $(CFLAGS) $(LDFLAGS) -lssh 
 
 ypfs: ypfs.c
 	$(CC) -o $@ $< $(CFLAGS) $(LDFLAGS)

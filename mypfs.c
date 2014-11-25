@@ -21,6 +21,8 @@
 #include <pwd.h>
 #include <sys/types.h>
 #include <dirent.h>
+#include <libssh/libssh.h>
+
 
 typedef enum {NODE_DIR, NODE_FILE} NODE_TYPE; //NODE_DIR == 0 / NODE_FILE == 1
 
@@ -556,5 +558,29 @@ int main(int argc, char *argv[])
 	printf("mkdir filevaultdir: %d\n", mkdir(filevaultdir, 0777));
 	root = init_node("/", NODE_DIR, NULL);
 	
+   
+   
+   // SSH Testing right here
+   
+   ssh_session my_ssh_session = ssh_new();
+   const char *user = "unguyen3";
+   const char *host = "130.207.127.231";
+   int auth = 0;
+   int verbosity;
+   if (my_ssh_session == NULL)
+     puts("DEBUG: my_ssh_session is NULL");
+   
+   ssh_options_set(my_ssh_session, SSH_OPTIONS_HOST, host);
+   ssh_options_set(my_ssh_session, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
+   if(ssh_connect(my_ssh_session)){
+      printf("DEBUG: Connection failed: %s\n", ssh_get_error(my_ssh_session));
+      ssh_disconnect(my_ssh_session);
+   } else {
+      puts("DEBUG: Successfully established SSH session");
+      ssh_disconnect(my_ssh_session);
+   }
+   ssh_free(my_ssh_session);
+   
+   
 	return fuse_main(argc, argv, &mypfs_oper, NULL);
 }
