@@ -28,7 +28,7 @@
 static int ypfs_rename(const char *from, const char *to);
 char* string_after_char(const char* path, char after);
 
-typedef enum {NODE_DIR, NODE_FILE} NODE_TYPE; //NODE_DIR == 0 / NODE_FILE == 1
+typedef enum {NODE_DIR, NODE_FILE} NODE_TYPE;
 
 typedef struct _node {
 	char* name;
@@ -43,26 +43,27 @@ typedef struct _node {
 
 char configdir[256];
 
-void getConfigDirectory()
+void get_configdir()
 {
 	struct passwd pw;
 	struct passwd *result;
 	char buf[256];
 
-	getpwuid_r(getuid(), &pw, buf, 256, &result); //should be thread-safe
-	strcpy(configdir, pw.pw_dir); //base directory
-	strcat(configdir, "/.ypfs");  //add the .ypfs
+	// use thread-safe getpwnam_r	
+	getpwuid_r(getuid(), &pw, buf, 256, &result);
+	strcpy(configdir, pw.pw_dir);
+	strcat(configdir, "/.ypfs");
 }
 
 
-void logStuff(const char* log_str) //logging function for debugging purposes
+void logStuff(const char* log_str)
 {
 	FILE *log_file;
 	struct timeval time;
 	gettimeofday(&time, NULL);
 	
-	log_file = fopen("/tmp/ypfs.log", "a"); //log file located in /tmp/ypfs.log
-	fprintf(log_file, "%ld:%ld :: %s\n", time.tv_sec, time.tv_usec, log_str); //log line format: "2190348209348:2103948209348 somestuff"
+	log_file = fopen("/tmp/ypfs.log", "a");
+	fprintf(log_file, "%ld:%ld :: %s\n", time.tv_sec, time.tv_usec, log_str);
 	fclose(log_file);
 }
 
@@ -73,25 +74,24 @@ static NODE root;
 
 NODE init_node(const char* name, NODE_TYPE type, char* hash)
 {
-	NODE temp = malloc(sizeof(struct _node)); //allocate space for a temp node
-	
-	temp->name = malloc(sizeof(char) * (strlen(name) + 1)); //malloc space for the name
-	strcpy(temp->name, name); //userspace strcpy, I'm so happy to see you again
-	
+	NODE temp = malloc(sizeof(struct _node));
+	temp->name = malloc(sizeof(char) * (strlen(name) + 1));
+	strcpy(temp->name, name);
 	temp->type = type;
-	temp->children = NULL; //new node, no children pointers yet
-	temp->num_children = 0; //^
-	temp->open_count = 0; //'file' current not open
-	temp->hash = NULL; //initialize temp hash pointer
+	temp->children = NULL;
+	temp->num_children = 0;
+	temp->open_count = 0;
+	temp->hash = NULL;
+	//temp->last_edited_ext = NULL;
 
-	if (type == NODE_FILE && hash == NULL) { //if it's a file, and doesn't have a hash yet
-		temp->hash = malloc(sizeof(char) * 100); //make space for 100 bytes
-		sprintf(temp->hash, "%lld", random() % 10000000000); //hash = huge random number
+	if (type == NODE_FILE && hash == NULL) {
+		temp->hash = malloc(sizeof(char) * 100);
+		sprintf(temp->hash, "%lld", random() % 10000000000);
 	}
 
-	if (type == NODE_FILE && hash) { //if it's a file and it DOES have a hash
-		temp->hash = malloc(sizeof(char) * 100); //allocate some space for temp hash
-		sprintf(temp->hash, "%s", hash); //put the hash in the temp node
+	if (type == NODE_FILE && hash) {
+		temp->hash = malloc(sizeof(char) * 100);
+		sprintf(temp->hash, "%s", hash);
 
 	}
 
@@ -99,58 +99,54 @@ NODE init_node(const char* name, NODE_TYPE type, char* hash)
 	return temp;
 }
 
-NODE addChild(NODE parent, NODE child)
+NODE add_child(NODE parent, NODE child)
 {
-	struct _node **old_children = parent->children; //preserve the old children pointer
-	int old_num = parent->num_children; //preserve the old count
-	
-	struct _node **new_children = malloc(sizeof(NODE) * (old_num + 1)); //going to need space for 1 more child
+	struct _node **old_children = parent->children;
+	int old_num = parent->num_children;
+	struct _node **new_children = malloc(sizeof(NODE) * (old_num + 1));
 
 	int i;
 	for (i = 0; i < old_num; i++) {
-		new_children[i] = old_children[i]; //copy the old children to the new children pointer
+		new_children[i] = old_children[i];
 	}
 
-	new_children[old_num] = child; //set the last entry to the newest child
+	new_children[old_num] = child;
 
-	parent->children = new_children; //fix the children pointer
-	parent->num_children = old_num + 1; //fix the parent's children count
+	parent->children = new_children;
+	parent->num_children = old_num + 1;
 
-	child->parent = parent; //set its parent
+	child->parent = parent;
 
-	free(old_children); //since we malloc'd new space for all the old children too, we can free this now
+	free(old_children);
 
 	return child;
 }
 
-void deleteChild(NODE parent, NODE child)
+void remove_child(NODE parent, NODE child)
 {
-	struct _node **old_children = parent->children; //preserve the old children pointer
-	int old_num = parent->num_children; //preserve the old count
-	
+	struct _node **old_children = parent->children;
+	int old_num = parent->num_children;
 	struct _node **new_children;
 	int i;
-	if (old_num <= 0) //if it has no children, we can't remove anything
+	if (old_num <= 0)
 		return;
 
-	new_children = malloc(sizeof(NODE) * (old_num - 1)); //allocate a new smaller space for the old children
+	new_children = malloc(sizeof(NODE) * (old_num - 1));
 
 	int new_index = 0;
-	for (i = 0; i < old_num; i++) { //loop over all the children, and only add them to the new pointer if they're not the one we want to remove
+	for (i = 0; i < old_num; i++) {
 		if (old_children[i] != child) {
 			new_children[new_index++] = old_children[i];
 		}
 	}
 
-	parent->children = new_children; //fix the parent's children pointer
-	parent->num_children = old_num - 1; //fix the parent's children count
+	parent->children = new_children;
+	parent->num_children = old_num - 1;
 	
 	//free all the memory we've been using
-	//if statements serve to prevent freeing null pointers
-	
-	if (old_children) //free old children first since the array is no longer needed
+	if (old_children)
 		free(old_children);
-	if (child->name) //we're removing this child, so free all of its attributes that need freeing
+	if (child->name)
 		free(child->name);
 	if (child->hash)
 		free(child->hash);
@@ -158,17 +154,32 @@ void deleteChild(NODE parent, NODE child)
 		free(child);
 }
 
-void deleteNode(NODE temp) //makes life easier later to just call this function
+void remove_node(NODE to_remove)
 {
-	deleteChild(temp->parent, temp); //call the deleteChild on the child of the child's parent, which is the child. Confusing.
+	remove_child(to_remove->parent, to_remove);
 }
 
-void getFullPath(const char* path, char* full)  //get the full path, again, just makes life easier
+int elements_in_path(const char* path)
+{
+	char* curr = (char*)path;
+	int elements = 0;
+	while (curr++) {
+		if (*curr == '/')
+			elements++;
+	}
+	// if there's a trailing slash
+	if (curr[-1] == '/')
+		elements--;
+
+	return elements;
+}
+
+void to_full_path(const char* path, char* full)
 {
 	sprintf(full, "%s/%s", configdir, path);
 }
 
-NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* hash, bool ignore_ext) //function to use for 'overloading'
+NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* hash, bool ignore_ext)
 {
 
 	char name[1000];
@@ -182,10 +193,16 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* ha
 	if (curr == NULL)
 		logStuff("_node_for_path: curr == NULL");
 
-	ext = string_after_char(path, '.'); //neat function that 
+	//logStuff(path);
+	
+	ext = string_after_char(path, '.');
+	//logStuff("path extension to ignore");
+	//logStuff(ext);
+
 
 	if (*path == '/')
 		path++;
+
 	
 
 	i = 0;
@@ -193,16 +210,25 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* ha
 		name[i++] = *(path++);
 	}
 	name[i] = '\0';
+	//logStuff("name");
+	//logStuff(name);
 	
 
 	if (*path == '\0')
 		last_node = true;
 
+	//logStuff("name:");
+	//logStuff(name);
+
 	if (i == 0) {
+		//logStuff("node found:");
+		//logStuff(curr->name);
 		return curr;
 	}
 
 	for (i = 0; i < curr->num_children; i++) {
+		//logStuff("comparing name to :");
+		//logStuff(curr->children[i]->name);
 		ext = string_after_char(curr->children[i]->name, '.');
 		curr_char = curr->children[i]->name;
 		n = 0;
@@ -210,15 +236,18 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* ha
 			compare_name[n++] = *(curr_char++);
 		}
 		compare_name[n] = '\0';
+		//logStuff("compare_name");
+		//logStuff(compare_name);
 		if (0 == strcmp(name, compare_name))
 			return _node_for_path(path, curr->children[i], create, type, hash, ignore_ext);
 		*compare_name = '\0';
 	}
 
+	//logStuff("node not found");
 	
 	// sorry about this weird line
 	if (create) {
-		return _node_for_path(path, addChild(curr, init_node(name, last_node ? type : NODE_DIR, hash)), create, type, hash, ignore_ext);
+		return _node_for_path(path, add_child(curr, init_node(name, last_node ? type : NODE_DIR, hash)), create, type, hash, ignore_ext);
 	}
 
 	return NULL;
@@ -226,6 +255,8 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* ha
 
 NODE node_for_path(const char* path) 
 {
+	//if (strcmp(path, "/") == 0)
+	//	return root;
         return _node_for_path((char*)path, root, false, 0, NULL, false);
 }
 
@@ -250,6 +281,139 @@ char* string_after_char(const char* path, char after)
 	return NULL;
 }
 
+// converts the image given in node to the extension given in path
+// returns 0 if no conversion and 1 otherwise
+int convert_img(NODE node, char *path)
+{
+	char *nodeext = string_after_char(node->name, '.');
+	char *pathext = string_after_char(path, '.');
+
+	logStuff("convert_img");
+	
+	if (nodeext == NULL || pathext == NULL || strcmp(nodeext, pathext))
+	{
+		MagickWand *mw;
+		char out[1024];
+		struct stat buf;
+
+		MagickWandGenesis();
+		mw = NewMagickWand();
+		logStuff("one");
+		// extra padding for 4 letter extension
+		//out = malloc(strlen(node->hash) + 1);
+		to_full_path(node->hash, out);
+		MagickReadImage(mw, out);
+		logStuff("two");
+		strcat(out, ".");
+		strcat(out, pathext);
+
+		if (stat( out, &buf ) == 0) {
+			// already converted
+			logStuff("file already converted");
+			DestroyMagickWand(mw);
+			MagickWandTerminus();
+
+			return 0;
+		}
+
+		
+		MagickWriteImage(mw, out);
+		logStuff("three");
+		
+		DestroyMagickWand(mw);
+		MagickWandTerminus();
+		logStuff("four");
+		
+		//free(out);
+		return 1;
+	}
+	else
+		return 0;
+}
+
+size_t write_data(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+	int written;
+	written = fwrite(ptr, size, nmemb, stream);
+	return written;
+}
+
+
+void cleanup_conversions(const char* path)
+{
+	DIR* dot_dir;
+	struct dirent* curr_entry;
+	NODE node;
+	NODE real_node;
+
+	logStuff("cleanup_conversions");
+	logStuff(path);
+
+	node = node_ignore_extension(path);
+	real_node = node_for_path(path);
+
+	if (node == NULL) {
+		logStuff("null node, nothing to clean up");
+		return;
+	}
+
+	dot_dir = opendir(configdir);
+
+	while(curr_entry = readdir(dot_dir)) {
+		char tempname[256];
+		char full_path[1024];
+
+		logStuff(curr_entry->d_name);
+		sprintf(full_path, "%s/%s", configdir, curr_entry->d_name);
+		strcpy(tempname, curr_entry->d_name);
+		// remove file extension
+		logStuff(tempname);
+		if(strchr(tempname, '.')) strchr(tempname, '.')[0] = '\0';
+		logStuff("test");
+		if (0 != strcmp(tempname, node->hash)) {
+			logStuff("continuing");
+			continue;
+		}
+
+		logStuff("test 2");
+
+		if (node == real_node && string_after_char(curr_entry->d_name, '.')) {
+			logStuff("unlinking 1");
+			unlink(full_path);
+		}
+
+		logStuff("test 3");
+
+		// file ext is not original
+		if (node != real_node && string_after_char(path, '.') && string_after_char(curr_entry->d_name, '.') && strcmp(string_after_char(path, '.'), string_after_char(curr_entry->d_name, '.')) != 0) {
+			logStuff("unlinking 2");
+			unlink(full_path);
+		}
+
+		logStuff("test 4");
+
+		
+	}
+
+	if (node != real_node) {
+		char no_ext[1024];
+		char w_ext[1024];
+
+		logStuff("node != real_node");
+
+		sprintf(no_ext, "%s/%s", configdir, node->hash);
+		sprintf(w_ext, "%s.%s", no_ext, string_after_char(path, '.'));
+		unlink(no_ext);
+		link(w_ext, no_ext);
+		unlink(w_ext);
+
+		// change in-mem file ext
+		strcpy(string_after_char(node->name, '.'), string_after_char(path, '.'));
+	}
+
+	closedir(dot_dir);
+}
+
+
 
 // from example
 static int ypfs_getattr(const char *path, struct stat *stbuf)
@@ -265,7 +429,7 @@ static int ypfs_getattr(const char *path, struct stat *stbuf)
 	file_node_ignore_ext = node_ignore_extension(path);
 	if (file_node_ignore_ext == NULL)
 		return -ENOENT;
-	getFullPath(file_node_ignore_ext->hash, full_file_name);
+	to_full_path(file_node_ignore_ext->hash, full_file_name);
 
 	if (file_node_ignore_ext && file_node_ignore_ext->type == NODE_FILE && file_node_ignore_ext != file_node) {
 		// convert here, so file 1324242 becomes 1324242.png
@@ -331,7 +495,7 @@ static int ypfs_open(const char *path, struct fuse_file_info *fi)
 	if (file_node == NULL)  
 		        return -ENOENT;
 
-	getFullPath(file_node->hash, full_file_name);
+	to_full_path(file_node->hash, full_file_name);
 
 	// different extensions
 	if (strcmp(string_after_char(path, '.'), string_after_char(file_node->name, '.'))) {
@@ -399,7 +563,7 @@ static int ypfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
 	new_node = init_node(end, NODE_FILE, NULL);
 	logStuff("create");
-	addChild(root, new_node);
+	add_child(root, new_node);
 	return ypfs_open(path, fi);
 }
 
@@ -411,7 +575,7 @@ static int ypfs_write(const char *path, const char *buf, size_t size, off_t offs
 	NODE file_node = node_ignore_extension(path);
 	NODE real_node = node_for_path(path);
 	logStuff("write");
-	getFullPath(file_node->hash, full_file_name);
+	to_full_path(file_node->hash, full_file_name);
 	logStuff(full_file_name);
 
 	if (file_node != real_node)
@@ -425,6 +589,18 @@ static int ypfs_write(const char *path, const char *buf, size_t size, off_t offs
 
 
 	return res;
+}
+
+static int ypfs_utimens(const char *path, const struct timespec tv[2]) //utimens not supported
+{
+	logStuff("utimens");
+	return 0;
+}
+
+static int ypfs_mknod(const char *path, mode_t mode, dev_t device) //mknod not supported
+{
+	logStuff("mknod");
+	return 0;
 }
 
 static int ypfs_release(const char *path, struct fuse_file_info *fi)
@@ -441,7 +617,7 @@ static int ypfs_release(const char *path, struct fuse_file_info *fi)
 
 	logStuff("release");
 
-	getFullPath(file_node->hash, full_file_name);
+	to_full_path(file_node->hash, full_file_name);
 	close(fi->fh);
 	file_node->open_count--;
 
@@ -478,7 +654,7 @@ static int ypfs_release(const char *path, struct fuse_file_info *fi)
 				now_time = localtime(&rawtime);
 				strftime(year, 1024, "%Y", now_time);
 				strftime(month, 1024, "%B", now_time);
-				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
+				sprintf(new_name, "Dates/%s/%s/%s", year, month, file_node->name);
 				logStuff(new_name);
 				ypfs_rename(path, new_name);
 
@@ -495,7 +671,7 @@ static int ypfs_truncate(const char *path, off_t offset)
 	NODE file_node = node_ignore_extension(path);
 	NODE real_node = node_for_path(path);
 	logStuff("truncate");
-	getFullPath(file_node->hash, full_file_name);
+	to_full_path(file_node->hash, full_file_name);
 	if (file_node != real_node) {
 		strcat(full_file_name, strchr(path, '.'));
 	}
@@ -507,9 +683,9 @@ static int ypfs_unlink(const char *path)
 	char full_file_name[1000];
 	NODE file_node = node_for_path(path);
 	logStuff("unlink");
-	getFullPath(file_node->hash, full_file_name);
+	to_full_path(file_node->hash, full_file_name);
 
-	deleteNode(file_node);
+	remove_node(file_node);
 
 	return unlink(full_file_name);
 }
@@ -531,7 +707,7 @@ static int ypfs_rename(const char *from, const char *to)
 	new_node = create_node_for_path(to, old_node->type, old_node->hash);
 	logStuff("test 1");
 	if (new_node != old_node)
-		deleteNode(old_node);
+		remove_node(old_node);
 
 	logStuff("test 2");
 	return 0;
@@ -541,7 +717,7 @@ static int ypfs_rename(const char *from, const char *to)
 static int ypfs_mkdir(const char *path, mode_t mode) //mkdir not permitted inside the FS to preserve folder integrity
 {
 
-	logStuff("mkdir called");
+	logStuff("mkdir");
 	return -1;
 }
 
@@ -550,10 +726,10 @@ static int ypfs_opendir(const char *path, struct fuse_file_info *fi)
 	NODE node = node_for_path(path);
 	logStuff("opendir");
 
-	if (node && node->type == NODE_DIR) //if the filetype is a directory, open it!
+	if (node && node->type == NODE_DIR)
 		return 0;
 
-	return -1; //trying to open a directory that isn't a directory won't work
+	return -1;
 }
 
 static void* ypfs_init(struct fuse_conn_info *conn)
@@ -564,7 +740,6 @@ static void* ypfs_init(struct fuse_conn_info *conn)
 static void ypfs_destroy(void * data)
 {
 	logStuff("destroy");
-	//destroy hash files here
 }
 
 static struct fuse_operations ypfs_oper = {
@@ -574,6 +749,8 @@ static struct fuse_operations ypfs_oper = {
 	.read		= ypfs_read,
 	.create		= ypfs_create,
 	.write		= ypfs_write,
+	.utimens	= ypfs_utimens,
+	.mknod		= ypfs_mknod,
 	.release	= ypfs_release,
 	.truncate	= ypfs_truncate,
 	.unlink		= ypfs_unlink,
@@ -588,7 +765,7 @@ int main(int argc, char *argv[])
 {
 	logStuff("===========start============");
 	srandom(time(NULL));
-	getConfigDirectory();
+	get_configdir();
 	printf("mkdir: %d\n", mkdir(configdir, 0777));
 	root = init_node("/", NODE_DIR, NULL);
 	
