@@ -1,7 +1,7 @@
 CFLAGS := -Wall $(shell pkg-config fuse libexif json --cflags) $(shell curl-config --cflags) $(shell Magick-config --cflags)
 LDFLAGS := $(shell pkg-config fuse libexif json --libs) $(shell curl-config --libs) $(shell Magick-config --libs) $(shell MagickWand-config --libs)
 
-targets = ypfs #fuseexmp fusexmp_fh hello hello_ll null
+targets = mypfs hello
 
 all: $(targets)
 
