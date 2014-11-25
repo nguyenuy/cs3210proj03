@@ -740,7 +740,7 @@ static void* ypfs_init(struct fuse_conn_info *conn)
 
 static void ypfs_destroy(void * data)
 {
-	mylog("destroy")
+	mylog("destroy");
 }
 
 static struct fuse_operations ypfs_oper = {
