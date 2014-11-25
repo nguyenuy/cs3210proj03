@@ -22,7 +22,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <libssh/libssh.h>
-
+#include <libssh/sftp.h>
 
 typedef enum {NODE_DIR, NODE_FILE} NODE_TYPE; //NODE_DIR == 0 / NODE_FILE == 1
 
@@ -550,6 +550,98 @@ static struct fuse_operations mypfs_oper = {
 	.init		= mypfs_init,
 };
 
+
+int authenticate_kbdint(ssh_session session)
+{
+     int rc;
+     rc = ssh_userauth_kbdint(session, "unguyen3", NULL);
+     puts("DEBUG: I'm here");
+     while (rc == SSH_AUTH_INFO)
+     {
+            const char *name, *instruction;
+            int nprompts, iprompt;
+            name = ssh_userauth_kbdint_getname(session);
+            instruction = ssh_userauth_kbdint_getinstruction(session);
+            nprompts = ssh_userauth_kbdint_getnprompts(session);
+            if (strlen(name) > 0)
+                printf("%s\n", name);
+            if (strlen(instruction) > 0)
+                printf("%s\n", instruction);
+            for (iprompt = 0; iprompt < nprompts; iprompt++)
+          {
+                   const char *prompt;
+                   char echo;
+                   prompt = ssh_userauth_kbdint_getprompt(session, iprompt, &echo);
+                   if (echo)
+               {
+                          char buffer[128], *ptr;
+                          printf("%s", prompt);
+                          if (fgets(buffer, sizeof(buffer), stdin) == NULL)
+                              return SSH_AUTH_ERROR;
+                          buffer[sizeof(buffer) - 1] = '\0';
+                          if ((ptr = strchr(buffer, '\n')) != NULL)
+                              *ptr = '\0';
+                          if (ssh_userauth_kbdint_setanswer(session, iprompt, buffer) < 0)
+                              return SSH_AUTH_ERROR;
+                          memset(buffer, 0, strlen(buffer));
+               }
+                   else
+               {
+                          char *ptr;
+                          ptr = getpass(prompt);
+                          if (ssh_userauth_kbdint_setanswer(session, iprompt, ptr) < 0)
+                              return SSH_AUTH_ERROR;
+               }
+          }
+            rc = ssh_userauth_kbdint(session, NULL, NULL);
+     }
+     return rc;
+}
+
+
+int sftp_list_dir(ssh_session session, sftp_session sftp)
+{
+     sftp_dir dir;
+     sftp_attributes attributes;
+     int rc;
+     dir = sftp_opendir(sftp, "/net/home/unguyen3");
+     if (!dir)
+     {
+        fprintf(stderr, "Directory not opened: %s\n",
+        ssh_get_error(session));
+        return SSH_ERROR;
+     }
+     printf("Name                       Size Perms    Owner\tGroup\n");
+     while ((attributes = sftp_readdir(sftp, dir)) != NULL)
+     {
+     printf("%-20s %10llu %.8o %s(%d)\t%s(%d)\n",
+                        attributes->name,
+                        (long long unsigned int) attributes->size,
+                        attributes->permissions,
+                        attributes->owner,
+                        attributes->uid,
+                        attributes->group,
+                        attributes->gid);
+             sftp_attributes_free(attributes);
+     }
+     if (!sftp_dir_eof(dir))
+     {
+         fprintf(stderr, "Can't list directory: %s\n",
+                                ssh_get_error(session));
+         sftp_closedir(dir);
+         return SSH_ERROR;
+     }
+     rc = sftp_closedir(dir);
+     if (rc != SSH_OK)
+     {
+         fprintf(stderr, "Can't close directory: %s\n",
+                                ssh_get_error(session));
+         return rc;
+     }
+}
+
+
+
 int main(int argc, char *argv[])
 {
 	puts("DEBUG: ===========start_filesystem============");
@@ -563,22 +655,41 @@ int main(int argc, char *argv[])
    // SSH Testing right here
    
    ssh_session my_ssh_session = ssh_new();
+   // This is the the factor-3210 server
    const char *user = "unguyen3";
-   const char *host = "130.207.127.231";
-   int auth = 0;
+   const char *host = "130.207.21.100";
    int verbosity;
+   char *password;
+   int rc;
+   
    if (my_ssh_session == NULL)
      puts("DEBUG: my_ssh_session is NULL");
    
    ssh_options_set(my_ssh_session, SSH_OPTIONS_HOST, host);
    ssh_options_set(my_ssh_session, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
+   ssh_options_set(my_ssh_session, SSH_OPTIONS_USER, user);
+   
    if(ssh_connect(my_ssh_session)){
       printf("DEBUG: Connection failed: %s\n", ssh_get_error(my_ssh_session));
-      ssh_disconnect(my_ssh_session);
    } else {
       puts("DEBUG: Successfully established SSH session");
-      ssh_disconnect(my_ssh_session);
+      password = getpass("Enter your password: ");
+      rc = ssh_userauth_password(my_ssh_session, user, password);
+      if (rc == SSH_AUTH_ERROR) {
+         puts("DEBUG: Error authorizing connection");
+      } else {
+         puts("DEBUG: Successfully authenticated connection");
+      }
    }
+   sftp_session sftp;
+   sftp = sftp_new(my_ssh_session);
+   if (sftp == NULL) {
+      puts("DEBUG: sftp connection unsuccessful");
+   } else {
+      puts("DEBUG: sftp connection successful");
+   }
+   sftp_list_dir(my_ssh_session, sftp);
+   ssh_disconnect(my_ssh_session);   
    ssh_free(my_ssh_session);
    
    
