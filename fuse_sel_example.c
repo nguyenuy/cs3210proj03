@@ -18,8 +18,6 @@
 #include <libexif/exif-data.h>
 #include <stdbool.h>
 #include <time.h>
-#include <curl/curl.h>
-#include <json/json.h>
 #include <pwd.h>
 #include <sys/types.h>
 #include <wand/MagickWand.h>
@@ -46,20 +44,14 @@ typedef enum {NODE_DIR, NODE_FILE} NODE_TYPE;
 
 typedef struct _node {
 	char* name;
-	char* hash; // unique name
+	char* hash; // unique name for potential duplicate files
 	NODE_TYPE type;
 	struct _node ** children;
 	struct _node* parent;
 	int num_children;
 	struct stat attr;
-	int open_count;
-	//char* last_edited_ext;
+	int open_count; //is file currently open 1/0
 } * NODE;
-
-struct curl_memory {
-  char *memory;
-  size_t size;
-};
 
 char configdir[256];
 
@@ -151,19 +143,16 @@ void remove_child(NODE parent, NODE child)
 
 	parent->children = new_children;
 	parent->num_children = old_num - 1;
-	//mylog("test============");
+	
+	//free all the memory we've been using
 	if (old_children)
 		free(old_children);
-	//mylog("one");
 	if (child->name)
 		free(child->name);
-	//mylog("two");
 	if (child->hash)
 		free(child->hash);
-	//mylog("three");
 	if (child)
 		free(child);
-	//mylog("======test");
 }
 
 void remove_node(NODE to_remove)
@@ -186,32 +175,6 @@ int elements_in_path(const char* path)
 	return elements;
 }
 
-/*
- * split - a pointer to an array of strings
- * returns number of strings split into
- */
-/*int split_path(const char* path, char** split)
-{
-	char* curr = (char*)path;
-	int elements = elements_in_path(path);
-	int i = 0;
-	
-	// slash_count now has number of elements in path
-	//*split = malloc(sizeof(char*) * slash_count);
-	
-	for (i = 0; i < elements; i++) {
-		int n = 0;
-		if (*curr == '/')
-			curr++;
-		split[i] = malloc(sizeof(char) * (strlen(path) + 1));
-		while(*curr != '/' && *curr != '\0') {
-			split[i][n++] = *(curr++);
-		}
-	}
-
-	return elements;
-}*/
-
 void to_full_path(const char* path, char* full)
 {
 	sprintf(full, "%s/%s", configdir, path);
@@ -219,14 +182,6 @@ void to_full_path(const char* path, char* full)
 
 NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* hash, bool ignore_ext)
 {
-	/*int elements = elements_in_path(path);
-	char** split = malloc(sizeof(char*) * elements);
-	NODE curr = root;
-	int i = 0;
-	elements = split_path(path, split)))
-	for (i = 0; i < elements; i++) {
-		
-	}*/
 
 	char name[1000];
 	int i = 0;
@@ -316,22 +271,6 @@ NODE node_ignore_extension(const char* path)
 	return _node_for_path((char*)path, root, false, 0, NULL, true);
 }
 
-
-void print_tree(NODE node)
-{
-	int i;
-	mylog(node->name);
-	for (i = 0; i < node->num_children; i++) {
-		print_tree(node->children[i]);
-	}
-}
-
-void print_full_tree()
-{
-	mylog("PRINTING TREE");
-	print_tree(root);
-}
-
 char* string_after_char(const char* path, char after)
 {
 	char* end = (char*)path;
@@ -393,242 +332,10 @@ int convert_img(NODE node, char *path)
 		return 0;
 }
 
-static size_t twitter_request_callback(void *contents, size_t size, size_t nmemb, void *userp)
-{
-	size_t realsize = size * nmemb;
-	struct curl_memory *mem = (struct curl_memory *)userp;
-
-	mem->memory = realloc(mem->memory, mem->size + realsize + 1);
-	if (mem->memory == NULL) {
-		/* out of memory! */ 
-		mylog("not enough memory (realloc returned NULL)\n");
-		return 0;
-		//exit(EXIT_FAILURE);
-	}
-
-	memcpy(&(mem->memory[mem->size]), contents, realsize);
-	mem->size += realsize;
-	mem->memory[mem->size] = 0;
-
-	return realsize;
-}
-
-int twitter_get_img_urls(char* username, char** urls, int max)
-{
-	CURL *curl;
-	CURLcode res;
-	struct curl_memory chunk;
-	char full_url[512];
-	struct json_object *new_obj;
-	struct json_object *tweets;
-	struct json_object *json_urls;
-	int num_tweets;
-	int i;
-	int curr_index = 0;
-	int num_urls;
-	char* curr_url;
-
-	mylog("twitter_get_img_urls");
-
-	// TODO
-	max = 20;
-
-	if (string_after_char(username, ' '))
-		return 0;
-
-	sprintf(full_url, "http://api.twitter.com/1/statuses/user_timeline.json?include_entities=true&include_rts=true&screen_name=%s&count=%d", username, max);
-
-	chunk.memory = malloc(1);  /* will be grown as needed by the realloc above */ 
-	chunk.size = 0;    /* no data at this point */ 
-
-	curl = curl_easy_init();
-	if(curl) {
-		curl_easy_setopt(curl, CURLOPT_URL, full_url);
-		/* send all data to this function  */ 
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, twitter_request_callback);
-
-		/* we pass our 'chunk' struct to the callback function */ 
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-		res = curl_easy_perform(curl);
-
-		mylog(chunk.memory);
-
-		tweets = json_tokener_parse(chunk.memory);
-		if (json_object_get_type(tweets) != json_type_array)
-		{
-			json_object_put(tweets);
-			return 0;
-		}
-		num_tweets = json_object_array_length(tweets);
-
-		curr_index = 0;
-		for (i = 0; i < num_tweets && curr_index < max; i++) {
-			new_obj = json_object_array_get_idx(tweets, i);
-			new_obj = json_object_object_get(new_obj, "entities");
-			json_urls = json_object_object_get(new_obj, "urls");
-			num_urls = json_object_array_length(json_urls);
-			while (num_urls-- > 0) {
-				new_obj = json_object_array_get_idx(json_urls, num_urls);
-				new_obj = json_object_object_get(new_obj, "expanded_url");
-				curr_url = json_object_get_string(new_obj);
-				urls[curr_index] = malloc(sizeof(char) * (strlen(curr_url) + 1));
-				strcpy(urls[curr_index], curr_url);
-				curr_index++;
-			}
-
-			mylog(json_object_get_string(new_obj));
-		}
-		
-		json_object_put(tweets);
-
-		if(chunk.memory)
-			free(chunk.memory);
-
-		/* always cleanup */ 
-		curl_easy_cleanup(curl);
-	}
-
-	return curr_index;
-}
-
-static char* twitter_username_for_path(const char* path)
-{
-	char* username_start = path;
-	if(strstr(path, "/twitter/") == NULL)
-		return NULL;
-	username_start += strlen("/twitter/");
-
-	if ((strchr(username_start, '/') && strchr(username_start, '/')[1] != '\0') || *username_start == '\0')
-		return NULL;
-
-	return username_start;
-}
-
 size_t write_data(void *ptr, size_t size, size_t nmemb, FILE *stream) {
 	int written;
 	written = fwrite(ptr, size, nmemb, stream);
 	return written;
-}
-
-void twitter_grab_new_files_for_username(char* username)
-{
-	char* urls[128];
-	int num_urls;
-	char* name;
-	int i;
-	NODE node;
-	NODE existing_node;
-	char full_path[512];
-	char real_path[512];
-	CURL *curl;
-	FILE *fp;
-	CURLcode res;
-
-	curl = curl_easy_init();
-
-	if (curl == NULL)
-		return;
-
-	num_urls = twitter_get_img_urls(username, urls, 128);
-	for (i = 0; i < num_urls; i++) {
-		mylog("URL===");
-		mylog(urls[i]);
-		mylog("string_after_char");
-		mylog(string_after_char(urls[i], '.'));
-		if (strcmp(string_after_char(urls[i], '.'), "jpg") == 0) {
-			name = string_after_char(urls[i], '/');
-			sprintf(full_path, "/twitter/%s/%s", username, name);
-			existing_node = node_for_path(full_path);
-			node = create_node_for_path(full_path, NODE_FILE, NULL);
-			to_full_path(node->hash, real_path);
-			mylog("hash:");
-			mylog(node->hash);
-			mylog("real_path");
-			mylog(real_path);
-			mylog("full_path");
-			mylog(full_path);
-			mylog("name");
-			mylog(name);
-
-			if (existing_node == NULL) {
-				fp = fopen(real_path,"wb");
-				curl_easy_setopt(curl, CURLOPT_URL, urls[i]);
-				curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-				curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-				res = curl_easy_perform(curl);
-				fclose(fp);
-			}
-			
-			free(urls[i]);
-		}
-	}
-	curl_easy_cleanup(curl);
-}
-
-
-void _serialize(FILE* file, char* path, NODE curr) {
-	int end_of_path = strlen(path);
-	int i;
-	
-	mylog("serialize");
-
-	if (curr->type == NODE_FILE) {
-		fprintf(file, "%s %s\n", path, curr->hash);
-		path[end_of_path] = '\0';
-		return;
-	}
-
-	for (i = 0; i < curr->num_children; i++) {
-		strcat(path, "/");
-		strcat(path, curr->children[i]->name);
-		_serialize(file, path, curr->children[i]);
-		path[end_of_path] = '\0';
-	}
-
-}
-
-void serialize() {
-	FILE* serial_file;
-	char file_name[1024];
-	char temp_path[1024];
-
-	mylog("start serializing");
-
-	temp_path[0] = '\0';
-
-	sprintf(file_name, "%s/ypfs.db", configdir);
-	serial_file = fopen(file_name, "w");
-
-	_serialize(serial_file, temp_path, root);
-
-	fclose(serial_file);
-}
-
-void _deserialize(FILE* file) {
-	char full_path[1024];
-	char hash[1024];
-
-	mylog("deserialize");
-
-	while (0 < fscanf(file, "%s %s\n", full_path, hash)) {
-		create_node_for_path(full_path, NODE_FILE, hash);
-	}
-}
-
-void deserialize() {
-	FILE* serial_file;
-	char file_name[1024];
-
-	mylog("start deserializing");
-
-	sprintf(file_name, "%s/ypfs.db", configdir);
-	if ((serial_file = fopen(file_name, "r")))
-	{
-		_deserialize(serial_file);
-		fclose(serial_file);
-	}
-	else
-		mylog("serial file not found");
 }
 
 
@@ -737,26 +444,14 @@ static int ypfs_getattr(const char *path, struct stat *stbuf)
 
 
 	memset(stbuf, 0, sizeof(struct stat));
-	if (twitter_username_for_path(path)) {
-		mylog("getattr for twitter user folder");
-		mylog(path);
-		stbuf->st_mode = S_IFDIR | 0444;
-		stbuf->st_nlink = 2;
-	} else if (file_node_ignore_ext->type == NODE_DIR && strstr(path, "twitter")) {
-		stbuf->st_mode = S_IFDIR | 0755;
-		stbuf->st_nlink = 2;
-	} else if (file_node_ignore_ext->type == NODE_DIR) { //if (strcmp(path, "/") == 0) {)
+	if (file_node_ignore_ext->type == NODE_DIR) { //if (strcmp(path, "/") == 0
 		stbuf->st_mode = S_IFDIR | 0444;
 		stbuf->st_nlink = 2;
 	} else if (file_node_ignore_ext != NULL && file_node != file_node_ignore_ext) {
 		mylog("getattr for non-original file ext");
 		stat(full_file_name, stbuf);
 		stbuf->st_mode = S_IFREG | 0444;
-		//stbuf->st_nlink = 1;
 	} else if (file_node_ignore_ext != NULL) {
-		/*stbuf->st_mode = S_IFREG | 0777;
-		stbuf->st_nlink = 1;
-		stbuf->st_size = strlen(hello_str);*/
 		mylog(full_file_name);
 		stat(full_file_name, stbuf);
 	} else
@@ -777,12 +472,9 @@ static int ypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	if (file_node == NULL)
 		return -ENOENT;
 
-	if (twitter_username_for_path(path))
-		twitter_grab_new_files_for_username(twitter_username_for_path(path));
-
 	filler(buf, ".", NULL, 0);
 	filler(buf, "..", NULL, 0);
-	//filler(buf, hello_path + 1, NULL, 0);
+	
 	for (i = 0; i < file_node->num_children; i++) {
 		filler(buf, file_node->children[i]->name, NULL, 0);
 	}
@@ -812,12 +504,7 @@ static int ypfs_open(const char *path, struct fuse_file_info *fi)
 		strcat(full_file_name, string_after_char(path, '.'));
 	}
 
-
-
-	//if ((fi->flags & 3) != O_RDONLY)
-	//	return -EACCES;
-	
-	fi->fh = open(full_file_name, fi->flags, 0666); //O_RDWR | O_CREAT
+	fi->fh = open(full_file_name, fi->flags, 0666); //Owner read/write
 
 	if(fi->fh == -1) {
 	        mylog("fd == -1");
@@ -836,7 +523,6 @@ static int ypfs_open(const char *path, struct fuse_file_info *fi)
 static int ypfs_read(const char *path, char *buf, size_t size, off_t offset,
 		      struct fuse_file_info *fi)
 {
-	//size_t len;
 	(void) fi;
 	NODE file_node;
 	mylog("read");
@@ -850,14 +536,6 @@ static int ypfs_read(const char *path, char *buf, size_t size, off_t offset,
 	
 	if (size < 0)
 		mylog("read error");
-
-	/*len = strlen(hello_str);
-	if (offset < len) {
-		if (offset + size > len)
-			size = len - offset;
-		memcpy(buf, hello_str + offset, size);
-	} else
-		size = 0;*/
 
 	return size;
 }
@@ -878,36 +556,11 @@ static int ypfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	for(i = 0; i < strlen(path); i++) {
 		if (path[i] == '/') num_slashes++;
 	}
-	// no writing to non=root or non-/twitter folders
-	if (num_slashes > 1 || strstr(path, "/twitter/")) {
+	
+	// no writing to non-root folders
+	if (num_slashes > 1 )) {
 		return -1;
 	}
-
-	if (0 == strcmp(end, "debugtree")) {
-		print_full_tree();
-		return -1;
-	}
-
-	if (0 == strcmp(end, "debugtwitter")) {
-		num_urls = twitter_get_img_urls("team_initrd", urls, 128);
-		mylog("TWITTER URLS");
-		for (i = 0; i < num_urls; i++) {
-			mylog(urls[i]);
-			free(urls[i]);
-		}
-		return -1;
-	}
-
-	if (0 == strcmp(end, "debugserialize")) {
-		serialize();
-		return -1;
-	}
-
-	if (0 == strcmp(end, "debugdeserialize")) {
-		deserialize();
-		return -1;
-	}
-
 
 	new_node = init_node(end, NODE_FILE, NULL);
 	mylog("create");
@@ -917,8 +570,7 @@ static int ypfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
 static int ypfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-	//FILE *new_file;
-	//int fd;
+
 	int res;
 	char full_file_name[1000];
 	NODE file_node = node_ignore_extension(path);
@@ -930,34 +582,12 @@ static int ypfs_write(const char *path, const char *buf, size_t size, off_t offs
 	if (file_node != real_node)
 		return -1;
 
-	/*new_file = fopen(full_file_name, "wb");
-
-	fwrite(buf, sizeof(char), size, new_file);
-
-	fclose(new_file);*/
-
-	/*fd = open(full_file_name, O_WRONLY | O_CREAT, 0666);
-	if(fd == -1) {
-		mylog("fd == -1");
-		return -errno;
-	}*/
-
 	res = pwrite(fi->fh, buf, size, offset);
 	if(res == -1) {
 		mylog("pwrite error");
 		res = -errno;
 	}
 
-
-	/*if (file_node->last_edited_ext)
-		free(file_node->last_edited_ext);
-	file_node->last_edited_ext = malloc(sizeof(char) * 64);
-	if (string_after_char(path, '.')) {
-		sprintf(file_node->last_edited_ext, "%s", string_after_char(path, '.'));
-	} else {
-		file_node->last_edited_ext[0] = '\0';
-	}*/
-	//close(fd);
 
 	return res;
 }
@@ -969,7 +599,7 @@ static int ypfs_utimens(const char *path, const struct timespec tv[2])
 	return 0;
 }
 
-static int ypfs_mknod(const char *path, mode_t mode, dev_t device)
+static int ypfs_mknod(const char *path, mode_t mode, dev_t device) //mknod not supported
 {
 	mylog("mknod");
 	return 0;
@@ -1005,7 +635,7 @@ static int ypfs_release(const char *path, struct fuse_file_info *fi)
 			strptime(buf, "%Y:%m:%d %H:%M:%S", &file_time);
 			strftime(year, 1024, "%Y", &file_time);
 			strftime(month, 1024, "%B", &file_time);
-			sprintf(new_name, "/%s/%s/%s", year, month, file_node->name);
+			sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
 			mylog(new_name);
 			ypfs_rename(path, new_name);
 			exif_data_unref(ed);
@@ -1025,27 +655,12 @@ static int ypfs_release(const char *path, struct fuse_file_info *fi)
 				now_time = localtime(&rawtime);
 				strftime(year, 1024, "%Y", now_time);
 				strftime(month, 1024, "%B", now_time);
-				sprintf(new_name, "/%s/%s/%s", year, month, file_node->name);
+				sprintf(new_name, "Dates/%s/%s/%s", year, month, file_node->name);
 				mylog(new_name);
 				ypfs_rename(path, new_name);
 
 			}
 		}
-		//ypfs_rename(path, "/lol");
-		//
-
-		/*if (file_node->last_edited_ext){
-			char new_path[1024];
-			strcpy(new_path, path);
-			strcpy(string_after_char(new_path, '.'), file_node->last_edited_ext);
-			mylog("about to clean up conversions");
-			mylog(new_path);
-			cleanup_conversions(new_path);
-
-
-			free(file_node->last_edited_ext);
-			file_node->last_edited_ext = NULL;
-		}*/
 	}
 
 	return 0;
@@ -1088,8 +703,8 @@ static int ypfs_rename(const char *from, const char *to)
 	while(*end != '\0') end++;
 	while(*end != '/' && end >= to) end--;
 	if (*end == '/') end++;
-	//new_node = init_node(end, NODE_FILE, old_node->hash);
-	//add_child(root, new_node);
+	
+	
 	new_node = create_node_for_path(to, old_node->type, old_node->hash);
 	mylog("test 1");
 	if (new_node != old_node)
@@ -1100,22 +715,10 @@ static int ypfs_rename(const char *from, const char *to)
 
 }
 
-static int ypfs_mkdir(const char *path, mode_t mode)
+static int ypfs_mkdir(const char *path, mode_t mode) //mkdir not permitted inside the FS to preserve folder integrity
 {
-	char* twitter_username = twitter_username_for_path(path);
 
 	mylog("mkdir");
-	mylog(path);
-	mylog(twitter_username);
-
-	if (strstr(path, "/twitter/")) {
-		// in twitter folder
-		if (twitter_username == NULL)
-			return -1;
-		mylog(create_node_for_path(path, NODE_DIR, NULL)->name);
-		return 0;
-
-	}
 	return -1;
 }
 
@@ -1132,14 +735,12 @@ static int ypfs_opendir(const char *path, struct fuse_file_info *fi)
 
 static void* ypfs_init(struct fuse_conn_info *conn)
 {
-	deserialize();
-
 	return NULL;
 }
 
-static void ypfs_destroy(void * noidea)
+static void ypfs_destroy(void * data)
 {
-	serialize();
+	mylog("destroy")
 }
 
 static struct fuse_operations ypfs_oper = {
@@ -1168,8 +769,8 @@ int main(int argc, char *argv[])
 	get_configdir();
 	printf("mkdir: %d\n", mkdir(configdir, 0777));
 	root = init_node("/", NODE_DIR, NULL);
-	//add_child(root, init_node("test", NODE_FILE));
+	
 	create_node_for_path("/twitter", NODE_DIR, NULL);
-	//create_node_for_path("/twitter/test", NODE_DIR, NULL);
+	
 	return fuse_main(argc, argv, &ypfs_oper, NULL);
 }
