@@ -772,7 +772,5 @@ int main(int argc, char *argv[])
 	printf("mkdir: %d\n", mkdir(configdir, 0777));
 	root = init_node("/", NODE_DIR, NULL);
 	
-	create_node_for_path("/twitter", NODE_DIR, NULL);
-	
 	return fuse_main(argc, argv, &ypfs_oper, NULL);
 }
