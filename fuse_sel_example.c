@@ -560,7 +560,7 @@ static int ypfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	}
 	
 	// no writing to non-root folders
-	if (num_slashes > 1 )) {
+	if (num_slashes > 1 ) {
 		return -1;
 	}
 
