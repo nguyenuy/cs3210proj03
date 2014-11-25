@@ -1,6 +1,4 @@
 /*
- 
-
   gcc -Wall `pkg-config fuse --cflags --libs` hello.c -o hello
 */
 
@@ -24,14 +22,11 @@
 #include <sys/types.h>
 #include <dirent.h>
 
-static int ypfs_rename(const char *from, const char *to);
-char* string_after_char(const char* path, char after);
-
 typedef enum {NODE_DIR, NODE_FILE} NODE_TYPE; //NODE_DIR == 0 / NODE_FILE == 1
 
 typedef struct _node {
 	char* name;
-	char* hash; // unique name for potential duplicate files
+	char* unique_id; // unique name for potential duplicate files
 	NODE_TYPE type;
 	struct _node ** children;
 	struct _node* parent;
@@ -40,17 +35,17 @@ typedef struct _node {
 	int open_count; //is file currently open 1/0
 } * NODE;
 
-char configdir[256];
+char filevaultdir[256];
 
-void getConfigDirectory()
+void getFileVaultDirectory()
 {
 	struct passwd pw;
 	struct passwd *result;
 	char buf[256];
 
 	getpwuid_r(getuid(), &pw, buf, 256, &result); //should be thread-safe
-	strcpy(configdir, pw.pw_dir); //base directory
-	strcat(configdir, "/.mypics");  //hidden representation on user home directory
+	strcpy(filevaultdir, pw.pw_dir); //base directory
+	strcat(filevaultdir, "/.mypics");  //hidden representation on user home directory
 }
 
 /*
@@ -58,7 +53,7 @@ void getConfigDirectory()
  */
 static NODE root;
 
-NODE init_node(const char* name, NODE_TYPE type, char* hash)
+NODE init_node(const char* name, NODE_TYPE type, char* unique_id)
 {
 	NODE temp = malloc(sizeof(struct _node)); //allocate space for a temp node
 	
@@ -69,16 +64,16 @@ NODE init_node(const char* name, NODE_TYPE type, char* hash)
 	temp->children = NULL; //new node, no children pointers yet
 	temp->num_children = 0; //^
 	temp->open_count = 0; //'file' current not open
-	temp->hash = NULL; //initialize temp hash pointer
+	temp->unique_id = NULL; //initialize temp unique_id pointer
 
-	if (type == NODE_FILE && hash == NULL) { //if it's a file, and doesn't have a hash yet
-		temp->hash = malloc(sizeof(char) * 100); //make space for 100 bytes
-		sprintf(temp->hash, "%lld", random() % 100000000000000); //hash = huge random number
+	if (type == NODE_FILE && unique_id == NULL) { //if it's a file, and doesn't have a unique_id yet
+		temp->unique_id = malloc(sizeof(char) * 100); //make space for 100 bytes
+		sprintf(temp->unique_id, "%lld", random() % 100000000000000); //unique_id = huge random number
 	}
 
-	if (type == NODE_FILE && hash) { //if it's a file and it DOES have a hash
-		temp->hash = malloc(sizeof(char) * 100); //allocate some space for temp hash
-		sprintf(temp->hash, "%s", hash); //put the hash in the temp node
+	if (type == NODE_FILE && unique_id) { //if it's a file and it DOES have a unique_id
+		temp->unique_id = malloc(sizeof(char) * 100); //allocate some space for temp unique_id
+		sprintf(temp->unique_id, "%s", unique_id); //put the unique_id in the temp node
 
 	}
 
@@ -139,8 +134,8 @@ void deleteChild(NODE parent, NODE child)
 		free(old_children);
 	if (child->name) //we're removing this child, so free all of its attributes that need freeing
 		free(child->name);
-	if (child->hash)
-		free(child->hash);
+	if (child->unique_id)
+		free(child->unique_id);
 	if (child)
 		free(child);
 }
@@ -150,12 +145,25 @@ void deleteNode(NODE temp) //makes life easier later to just call this function
 	deleteChild(temp->parent, temp); //call the deleteChild on the child of the child's parent, which is the child. Confusing.
 }
 
-void getFullPath(const char* path, char* full)  //get the full path, again, just makes life easier
+
+char* string_after_char(const char* path, char after)
 {
-	sprintf(full, "%s/%s", configdir, path);
+	char* end = (char*)path;
+	while (*end) end++;
+	while(end > path && *end != after) end--;
+	if (end != path || *end == after)
+		return end + 1;
+
+	return NULL;
 }
 
-NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* hash, bool ignore_ext) //function to use for 'overloading'
+
+void getFullPath(const char* path, char* full)  //get the full path, again, just makes life easier
+{
+	sprintf(full, "%s/%s", filevaultdir, path);
+}
+
+NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* unique_id, bool ignore_ext) //function to use for 'overloading'
 {
 
 	char name[1000];
@@ -198,14 +206,14 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* ha
 		}
 		compare_name[n] = '\0';
 		if (0 == strcmp(name, compare_name))
-			return _node_for_path(path, curr->children[i], create, type, hash, ignore_ext);
+			return _node_for_path(path, curr->children[i], create, type, unique_id, ignore_ext);
 		*compare_name = '\0';
 	}
 
 	
 	// sorry about this weird line
 	if (create) {
-		return _node_for_path(path, addChild(curr, init_node(name, last_node ? type : NODE_DIR, hash)), create, type, hash, ignore_ext);
+		return _node_for_path(path, addChild(curr, init_node(name, last_node ? type : NODE_DIR, unique_id)), create, type, unique_id, ignore_ext);
 	}
 
 	return NULL;
@@ -216,9 +224,9 @@ NODE node_for_path(const char* path)
         return _node_for_path((char*)path, root, false, 0, NULL, false);
 }
 
-NODE create_node_for_path(const char* path, NODE_TYPE type, char* hash)
+NODE create_node_for_path(const char* path, NODE_TYPE type, char* unique_id)
 {
-	return _node_for_path((char*)path, root, true, type, hash, false);
+	return _node_for_path((char*)path, root, true, type, unique_id, false);
 }
 
 NODE node_ignore_extension(const char* path)
@@ -226,20 +234,9 @@ NODE node_ignore_extension(const char* path)
 	return _node_for_path((char*)path, root, false, 0, NULL, true);
 }
 
-char* string_after_char(const char* path, char after)
-{
-	char* end = (char*)path;
-	while (*end) end++;
-	while(end > path && *end != after) end--;
-	if (end != path || *end == after)
-		return end + 1;
-
-	return NULL;
-}
-
 
 // from example
-static int ypfs_getattr(const char *path, struct stat *stbuf)
+static int mypfs_getattr(const char *path, struct stat *stbuf)
 {
 	int res = 0;
 	NODE file_node;
@@ -252,7 +249,7 @@ static int ypfs_getattr(const char *path, struct stat *stbuf)
 	file_node_ignore_ext = node_ignore_extension(path);
 	if (file_node_ignore_ext == NULL)
 		return -ENOENT;
-	getFullPath(file_node_ignore_ext->hash, full_file_name);
+	getFullPath(file_node_ignore_ext->unique_id, full_file_name);
 
 	if (file_node_ignore_ext && file_node_ignore_ext->type == NODE_FILE && file_node_ignore_ext != file_node) {
 		// convert here, so file 1324242 becomes 1324242.png
@@ -282,7 +279,7 @@ static int ypfs_getattr(const char *path, struct stat *stbuf)
 	return res;
 }
 
-static int ypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+static int mypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 			 off_t offset, struct fuse_file_info *fi)
 {
 	int i;
@@ -305,7 +302,7 @@ static int ypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 }
 
 // from example
-static int ypfs_open(const char *path, struct fuse_file_info *fi)
+static int mypfs_open(const char *path, struct fuse_file_info *fi)
 {
 	NODE file_node;
 	char full_file_name[1000];
@@ -318,7 +315,7 @@ static int ypfs_open(const char *path, struct fuse_file_info *fi)
 	if (file_node == NULL)  
 		        return -ENOENT;
 
-	getFullPath(file_node->hash, full_file_name);
+	getFullPath(file_node->unique_id, full_file_name);
 
 	// different extensions
 	if (strcmp(string_after_char(path, '.'), string_after_char(file_node->name, '.'))) {
@@ -342,7 +339,7 @@ static int ypfs_open(const char *path, struct fuse_file_info *fi)
 }
 
 // from example
-static int ypfs_read(const char *path, char *buf, size_t size, off_t offset,
+static int mypfs_read(const char *path, char *buf, size_t size, off_t offset,
 		      struct fuse_file_info *fi)
 {
 	(void) fi;
@@ -362,7 +359,7 @@ static int ypfs_read(const char *path, char *buf, size_t size, off_t offset,
 	return size;
 }
 
-static int ypfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
+static int mypfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
 	NODE new_node;
 	char* end = (char*)path;
@@ -387,10 +384,10 @@ static int ypfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	new_node = init_node(end, NODE_FILE, NULL);
 	puts("DEBUG: create");
 	addChild(root, new_node);
-	return ypfs_open(path, fi);
+	return mypfs_open(path, fi);
 }
 
-static int ypfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+static int mypfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
 
 	int res;
@@ -398,7 +395,7 @@ static int ypfs_write(const char *path, const char *buf, size_t size, off_t offs
 	NODE file_node = node_ignore_extension(path);
 	NODE real_node = node_for_path(path);
 	puts("DEBUG: write");
-	getFullPath(file_node->hash, full_file_name);
+	getFullPath(file_node->unique_id, full_file_name);
 	printf("DEBUG: full_file_name ==> %s\n", full_file_name);
 
 	if (file_node != real_node)
@@ -414,7 +411,32 @@ static int ypfs_write(const char *path, const char *buf, size_t size, off_t offs
 	return res;
 }
 
-static int ypfs_release(const char *path, struct fuse_file_info *fi)
+
+static int mypfs_rename(const char *from, const char *to)
+{
+	NODE old_node;
+	NODE new_node;
+	char* end = (char*)to;
+	puts("DEBUG: rename");
+
+	old_node = node_for_path(from);
+
+	while(*end != '\0') end++;
+	while(*end != '/' && end >= to) end--;
+	if (*end == '/') end++;
+	
+	
+	new_node = create_node_for_path(to, old_node->type, old_node->unique_id);
+	puts("DEBUG: test 1");
+	if (new_node != old_node)
+		deleteNode(old_node);
+
+	puts("DEBUG: test 2");
+	return 0;
+
+}
+
+static int mypfs_release(const char *path, struct fuse_file_info *fi)
 {
 	ExifData *ed;
 	ExifEntry *entry;
@@ -428,7 +450,7 @@ static int ypfs_release(const char *path, struct fuse_file_info *fi)
 
 	puts("DEBUG: release");
 
-	getFullPath(file_node->hash, full_file_name);
+	getFullPath(file_node->unique_id, full_file_name);
 	close(fi->fh);
 	file_node->open_count--;
 
@@ -446,7 +468,7 @@ static int ypfs_release(const char *path, struct fuse_file_info *fi)
 			strftime(month, 1024, "%B", &file_time);
 			sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
 			printf("DEBUG: new_name ==> %s\n", new_name);
-			ypfs_rename(path, new_name);
+			mypfs_rename(path, new_name);
 			exif_data_unref(ed);
 		} else {
 			int num_slashes = 0;
@@ -467,7 +489,7 @@ static int ypfs_release(const char *path, struct fuse_file_info *fi)
 				strftime(month, 1024, "%B", now_time);
 				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
 				printf("DEBUG: new_name ==> %s\n", new_name);
-				ypfs_rename(path, new_name);
+				mypfs_rename(path, new_name);
 
 			}
 		}
@@ -476,50 +498,26 @@ static int ypfs_release(const char *path, struct fuse_file_info *fi)
 	return 0;
 }
 
-static int ypfs_unlink(const char *path)
+static int mypfs_unlink(const char *path)
 {
 	char full_file_name[1000];
 	NODE file_node = node_for_path(path);
 	puts("DEBUG: unlink");
-	getFullPath(file_node->hash, full_file_name);
+	getFullPath(file_node->unique_id, full_file_name);
 
 	deleteNode(file_node);
 
 	return unlink(full_file_name);
 }
 
-static int ypfs_rename(const char *from, const char *to)
-{
-	NODE old_node;
-	NODE new_node;
-	char* end = (char*)to;
-	puts("DEBUG: rename");
-
-	old_node = node_for_path(from);
-
-	while(*end != '\0') end++;
-	while(*end != '/' && end >= to) end--;
-	if (*end == '/') end++;
-	
-	
-	new_node = create_node_for_path(to, old_node->type, old_node->hash);
-	puts("DEBUG: test 1");
-	if (new_node != old_node)
-		deleteNode(old_node);
-
-	puts("DEBUG: test 2");
-	return 0;
-
-}
-
-static int ypfs_mkdir(const char *path, mode_t mode) //mkdir not permitted inside the FS to preserve folder integrity
+static int mypfs_mkdir(const char *path, mode_t mode) //mkdir not permitted inside the FS to preserve folder integrity
 {
 
 	puts("DEBUG: mkdir called");
 	return -1;
 }
 
-static int ypfs_opendir(const char *path, struct fuse_file_info *fi)
+static int mypfs_opendir(const char *path, struct fuse_file_info *fi)
 {
 	NODE node = node_for_path(path);
 	puts("DEBUG: opendir");
@@ -530,33 +528,33 @@ static int ypfs_opendir(const char *path, struct fuse_file_info *fi)
 	return -1; //trying to open a directory that isn't a directory won't work
 }
 
-static void* ypfs_init(struct fuse_conn_info *conn)
+static void* mypfs_init(struct fuse_conn_info *conn)
 {
 	return NULL;
 }
 
-static struct fuse_operations ypfs_oper = {
-	.getattr	= ypfs_getattr,
-	.readdir	= ypfs_readdir,
-	.open		= ypfs_open,
-	.read		= ypfs_read,
-	.create		= ypfs_create,
-	.write		= ypfs_write,
-	.release	= ypfs_release,
-	.unlink		= ypfs_unlink,
-	.rename		= ypfs_rename,
-	.mkdir		= ypfs_mkdir,
-	.opendir	= ypfs_opendir,
-	.init		= ypfs_init,
+static struct fuse_operations mypfs_oper = {
+	.getattr	= mypfs_getattr,
+	.readdir	= mypfs_readdir,
+	.open		= mypfs_open,
+	.read		= mypfs_read,
+	.create		= mypfs_create,
+	.write		= mypfs_write,
+	.release	= mypfs_release,
+	.unlink		= mypfs_unlink,
+	.rename		= mypfs_rename,
+	.mkdir		= mypfs_mkdir,
+	.opendir	= mypfs_opendir,
+	.init		= mypfs_init,
 };
 
 int main(int argc, char *argv[])
 {
 	puts("DEBUG: ===========start_filesystem============");
 	srandom(time(NULL));
-	getConfigDirectory();
-	printf("mkdir configdir: %d\n", mkdir(configdir, 0777));
+	getFileVaultDirectory();
+	printf("mkdir filevaultdir: %d\n", mkdir(filevaultdir, 0777));
 	root = init_node("/", NODE_DIR, NULL);
 	
-	return fuse_main(argc, argv, &ypfs_oper, NULL);
+	return fuse_main(argc, argv, &mypfs_oper, NULL);
 }
