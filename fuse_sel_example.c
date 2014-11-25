@@ -5,6 +5,8 @@
 */
 
 #define FUSE_USE_VERSION 29
+#define __USE_XOPEN
+#define _GNU_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
