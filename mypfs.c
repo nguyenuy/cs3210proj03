@@ -462,7 +462,7 @@ int pull_from_sftp_server() {
 	int fd;
 	
 	access_type = O_RDONLY;
-	file = sftp_open(sftp, "/mypfsPics/Patern_test.jpg", access_type, 0);
+	file = sftp_open(sftp, "mypfsPics/Patern_test.jpg", access_type, 0);
 	if(file == NULL) {
 		fprintf(stderr, "Can't open file for reading: %s\n", ssh_get_error(my_ssh_session));
 		return SSH_ERROR;
