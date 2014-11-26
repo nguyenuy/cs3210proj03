@@ -256,13 +256,15 @@ static int mypfs_getattr(const char *path, struct stat *stbuf) //grabbing the fi
 		// convert here, so file 1324242 becomes 1324242.png
 		puts("DEBUG: EXTENSION DOESN'T MATCH; NEED TO CONVERT");
 		//convert_img(file_node_ignore_ext, path);
-		// for stat later in function
+		
+		// fix path stuff for stat()
 		strcat(full_file_name, ".");
 		strcat(full_file_name, string_after_char(path, '.'));
 		printf("DEBUG: full_file_name ==> %s\n", full_file_name);
 	}
 
-
+	
+	//Most from below is grabbed from hello.c, but added some stat() calls for the hidden folder later
 	memset(stbuf, 0, sizeof(struct stat));
 	if (file_node_ignore_ext->type == NODE_DIR) { //if (strcmp(path, "/") == 0
 		stbuf->st_mode = S_IFDIR | 0444;
@@ -358,20 +360,22 @@ static int mypfs_create(const char *path, mode_t mode, struct fuse_file_info *fi
 {
 	NODE new_node;
 	char* end = (char*)path;
-	char* urls[128];
-	int num_urls;
 	int i;
 	int num_slashes = 0;
 
+	
+	//Grabs the filename from the path by getting everything after the last /
 	while(*end != '\0') end++;
 	while(*end != '/' && end >= path) end--;
 	if (*end == '/') end++;
 
+	//count number of slashes in filename
 	for(i = 0; i < strlen(path); i++) {
 		if (path[i] == '/') num_slashes++;
 	}
 	
 	// no writing to non-root folders
+	// /~root~/~something else~ has at least 2 slashes if it's not root directory
 	if (num_slashes > 1 ) {
 		return -1;
 	}
@@ -413,7 +417,6 @@ static int mypfs_rename(const char *from, const char *to)
 {
 	NODE old_node;
 	NODE new_node;
-	char* end = (char*)to;
 	puts("DEBUG: rename");
 
 	old_node = node_for_path(from);
@@ -441,7 +444,7 @@ with the same flags and file descriptor."
 */
 static int mypfs_release(const char *path, struct fuse_file_info *fi) //basically, this is where the magic happens in terms of directory sorting
 {
-	ExifData *ed; //temp var for the ExifData we need to pull from the image
+	ExifData *ed; //temp var for the ExifData we need to pull from the file
 	ExifEntry *entry;
 	
 	char full_file_name[1000];
@@ -454,7 +457,7 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 	char new_name[2048];
 
 	getFullPath(file_node->unique_id, full_file_name);
-	close(fi->fh); //from Fuse documentation: "fi->fh will contain the value set by the open method"
+	close(fi->fh); //close the file handle"
 	file_node->open_count--;
 
 	// redetermine where the file goes
@@ -465,14 +468,22 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 			entry = exif_content_get_entry(ed->ifd[EXIF_IFD_0], EXIF_TAG_DATE_TIME);
 			exif_entry_get_value(entry, buf, sizeof(buf));
 			
+			//time string formatting
 			strptime(buf, "%Y:%m:%d %H:%M:%S", &file_time);
 			strftime(year, 1024, "%Y", &file_time);
 			strftime(month, 1024, "%B", &file_time);
-			sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
+			//-----------------
+			
+			
+			sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name); //file path is now /Dates/year/month/<file>; write this to new_name
 			printf("DEBUG: new_name ==> %s\n", new_name);
-			mypfs_rename(path, new_name);
-			exif_data_unref(ed);
-		} else {
+			
+			
+			mypfs_rename(path, new_name); //call rename to make sure nodes stay together correctly
+			exif_data_unref(ed); //we're done with exif data, so get rid of it
+			
+		} else {  //file had no exif data, so we're gonna invent some
+		
 			int num_slashes = 0;
 			int i;
 			time_t rawtime;
@@ -482,15 +493,15 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 					num_slashes++;
 			}
 			
-			// if path only has 1 slash, then we're inside of the 'root' folder
+			// if path only has 1 slash, then we're inside of the 'root' folder, and thus allowed to be there
 			if (num_slashes == 1) {
 				struct tm * now_time;
 				time(&rawtime);
-				now_time = localtime(&rawtime);
+				now_time = localtime(&rawtime); //put the current time in now_time
 				strftime(year, 1024, "%Y", now_time);
 				strftime(month, 1024, "%B", now_time);
-				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
-				mypfs_rename(path, new_name);
+				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name); //same as before, but pretending that the exif data was today's date
+				mypfs_rename(path, new_name); //again, call rename for node stuff
 
 			}
 		}
@@ -502,13 +513,14 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 static int mypfs_unlink(const char *path)
 {
 	char full_file_name[1000];
+	int res = 0;
 	NODE file_node = node_for_path(path);
 	puts("DEBUG: unlink");
 	getFullPath(file_node->unique_id, full_file_name);
-
 	deleteNode(file_node);
-
-	return unlink(full_file_name);
+	res = unlink(full_file_name);
+	puts("DEBUG: unlink value: %d", res);
+	return res;
 }
 
 static int mypfs_mkdir(const char *path, mode_t mode) //mkdir not permitted inside the FS to preserve folder integrity
@@ -524,7 +536,7 @@ static int mypfs_opendir(const char *path, struct fuse_file_info *fi)
 	if (node && node->type == NODE_DIR) //if the filetype is a directory, open it!
 		return 0;
 
-	return -1; //trying to open a directory that isn't a directory won't work
+	return -1; //trying to open a 'file' that isn't a directory won't work
 }
 
 static void* mypfs_init(struct fuse_conn_info *conn)
