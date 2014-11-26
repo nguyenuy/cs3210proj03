@@ -56,28 +56,6 @@ void getFileVaultDirectory()
 	strcat(filevaultdir, "/.mypics");  //hidden representation on user home directory
 }
 
-int upload_to_sftp_server(char *full_file_name, char *new_file_name, char *upload_dir) {
-    ssize_t ret_in, ret_out;
-    int buf_size = 8192;
-    char buffer[buf_size];
-	char fileName[256];
-	
-	//make sure there's a special directory to upload into
-	sftp_mkdir(sftp, upload_dir, S_IRWXU);
-	int filehandle = open(full_file_name,O_RDWR, 0666);
-	fileName = string_after_char(full_file_name, '/');
-	
-	sftp_file file;
-	
-	new_file_name++;
-	file = sftp_open(sftp, fileName, O_WRONLY | O_TRUNC | O_CREAT | O_APPEND, S_IRWXU);
-	while ((ret_in = read(filehandle, &buffer, buf_size)) > 0) {  
-		sftp_write(file, &buffer, (size_t) ret_in);
-	}
-	sftp_close(file);
-	close(filehandle);
-}
-
 
 /*
  * Root of file system
@@ -596,6 +574,29 @@ static struct fuse_operations mypfs_oper = {
 	.opendir	= mypfs_opendir,
 	.init		= mypfs_init,
 };
+
+int upload_to_sftp_server(char *full_file_name, char *new_file_name, char *upload_dir) {
+    ssize_t ret_in, ret_out;
+    int buf_size = 8192;
+    char buffer[buf_size];
+	char fileName[256];
+	
+	//make sure there's a special directory to upload into
+	sftp_mkdir(sftp, upload_dir, S_IRWXU);
+	int filehandle = open(full_file_name,O_RDWR, 0666);
+	fileName = string_after_char(full_file_name, '/');
+	
+	sftp_file file;
+	
+	new_file_name++;
+	file = sftp_open(sftp, fileName, O_WRONLY | O_TRUNC | O_CREAT | O_APPEND, S_IRWXU);
+	while ((ret_in = read(filehandle, &buffer, buf_size)) > 0) {  
+		sftp_write(file, &buffer, (size_t) ret_in);
+	}
+	sftp_close(file);
+	close(filehandle);
+	return 0;
+}
 
 int main(int argc, char *argv[])
 {
