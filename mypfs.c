@@ -413,11 +413,6 @@ static int mypfs_write(const char *path, const char *buf, size_t size, off_t off
 		puts("DEBUG: pwrite error");
 		res = -errno;
 	}
-   
-   sftp_file file;
-   file = sftp_open(sftp,"lebron.jpg", O_WRONLY | O_TRUNC | O_CREAT, S_IRWXU);
-   sftp_write(file, buf, size);
-   sftp_close(file);
 
 	return res;
 }
@@ -447,6 +442,25 @@ static int mypfs_rename(const char *from, const char *to)
 
 }
 
+int upload_to_sftp_server(char *full_file_name, char *new_file_name, char *upload_dir) {
+      //Testing upload on this bitch
+      ssize_t ret_in, ret_out;
+      int buf_size = 8192;
+      char buffer[buf_size];
+      
+      //Need code to make directories one by one
+      sftp_mkdir(sftp, upload_dir, S_IRWXU);
+      int filehandle = open(full_file_name,O_RDWR, 0666);
+      sftp_file file;
+      new_file_name++;
+      file = sftp_open(sftp,"lebron.jpg", O_WRONLY | O_TRUNC | O_CREAT | O_APPEND, S_IRWXU);
+      while ((ret_in = read(filehandle, &buffer, buf_size)) > 0) {  
+         sftp_write(file, &buffer, (size_t) ret_in);
+      }
+      sftp_close(file);
+      close(filehandle);
+}
+
 static int mypfs_release(const char *path, struct fuse_file_info *fi)
 {
 	ExifData *ed;
@@ -458,6 +472,7 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi)
 	char year[1024];
 	char month[1024];
 	char new_name[2048];
+   char upload_dir[2048];
 
 	puts("DEBUG: release");
 
@@ -478,7 +493,9 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi)
 			strftime(year, 1024, "%Y", &file_time);
 			strftime(month, 1024, "%B", &file_time);
 			sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
+         sprintf(upload_dir, "Dates/%s/%s", year, month);
 			printf("DEBUG: new_name ==> %s\n", new_name);
+         upload_to_sftp_server(full_file_name, new_name, upload_dir);
 			mypfs_rename(path, new_name);
 			exif_data_unref(ed);
 		} else {
@@ -499,10 +516,10 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi)
 				strftime(year, 1024, "%Y", now_time);
 				strftime(month, 1024, "%B", now_time);
 				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
-				printf("DEBUG: new_name ==> %s\n", new_name);
+				sprintf(upload_dir, "Dates/%s/%s", year, month);
+            printf("DEBUG: new_name ==> %s\n", new_name);
+            upload_to_sftp_server(full_file_name, new_name, upload_dir);
 				mypfs_rename(path, new_name); 
-            
-
 			}
 		}
 	}
@@ -666,9 +683,12 @@ int main(int argc, char *argv[])
    
    my_ssh_session = ssh_new();
    // This is the the factor-3210 server
-   const char *user = "unguyen3";
-   int verbosity;
-   const char *password = "";
+   //const char *user = "unguyen3";
+   //const char *password = "";
+   char user[256];
+   const char *password;
+   printf("Input a username: ");
+   scanf("%s", &user);
    int rc;
    
    //Create the SSH Session First
@@ -682,7 +702,7 @@ int main(int argc, char *argv[])
       printf("DEBUG: Connection failed: %s\n", ssh_get_error(my_ssh_session));
    } else {
       puts("DEBUG: Successfully established SSH session");
-      //password = getpass("Enter your password: ");
+      password = getpass("Enter your password: ");
       rc = ssh_userauth_password(my_ssh_session, user, password);
       if (rc == SSH_AUTH_ERROR) {
          puts("DEBUG: Error authorizing connection");
