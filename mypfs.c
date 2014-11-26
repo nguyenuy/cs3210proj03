@@ -577,55 +577,7 @@ static struct fuse_operations mypfs_oper = {
 	.init		= mypfs_init,
 };
 
-
-int authenticate_kbdint(ssh_session session)
-{
-     int rc;
-     rc = ssh_userauth_kbdint(session, "unguyen3", NULL);
-     puts("DEBUG: I'm here");
-     while (rc == SSH_AUTH_INFO)
-     {
-            const char *name, *instruction;
-            int nprompts, iprompt;
-            name = ssh_userauth_kbdint_getname(session);
-            instruction = ssh_userauth_kbdint_getinstruction(session);
-            nprompts = ssh_userauth_kbdint_getnprompts(session);
-            if (strlen(name) > 0)
-                printf("%s\n", name);
-            if (strlen(instruction) > 0)
-                printf("%s\n", instruction);
-            for (iprompt = 0; iprompt < nprompts; iprompt++)
-          {
-                   const char *prompt;
-                   char echo;
-                   prompt = ssh_userauth_kbdint_getprompt(session, iprompt, &echo);
-                   if (echo)
-               {
-                          char buffer[128], *ptr;
-                          printf("%s", prompt);
-                          if (fgets(buffer, sizeof(buffer), stdin) == NULL)
-                              return SSH_AUTH_ERROR;
-                          buffer[sizeof(buffer) - 1] = '\0';
-                          if ((ptr = strchr(buffer, '\n')) != NULL)
-                              *ptr = '\0';
-                          if (ssh_userauth_kbdint_setanswer(session, iprompt, buffer) < 0)
-                              return SSH_AUTH_ERROR;
-                          memset(buffer, 0, strlen(buffer));
-               }
-                   else
-               {
-                          char *ptr;
-                          ptr = getpass(prompt);
-                          if (ssh_userauth_kbdint_setanswer(session, iprompt, ptr) < 0)
-                              return SSH_AUTH_ERROR;
-               }
-          }
-            rc = ssh_userauth_kbdint(session, NULL, NULL);
-     }
-     return rc;
-}
-
-
+//This could be useful..not used though
 int sftp_list_dir(ssh_session session, sftp_session sftp)
 {
      sftp_dir dir;
