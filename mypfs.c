@@ -589,7 +589,6 @@ int upload_to_sftp_server(char *full_file_name, char *uploadName, char *upload_d
 	
 	sftp_file file;
 	
-	new_file_name++;
 	file = sftp_open(sftp, uploadName, O_WRONLY | O_TRUNC | O_CREAT | O_APPEND, S_IRWXU);
 	while ((ret_in = read(filehandle, &buffer, buf_size)) > 0) {  
 		sftp_write(file, &buffer, (size_t) ret_in);
