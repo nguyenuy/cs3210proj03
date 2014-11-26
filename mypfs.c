@@ -39,6 +39,11 @@ typedef struct _node {
 
 char filevaultdir[256];
 
+// Used for SFTP Sessions
+const char *host = "130.207.21.100";
+ssh_session my_ssh_session;
+sftp_session sftp;
+
 void getFileVaultDirectory()
 {
 	struct passwd pw;
@@ -408,7 +413,11 @@ static int mypfs_write(const char *path, const char *buf, size_t size, off_t off
 		puts("DEBUG: pwrite error");
 		res = -errno;
 	}
-
+   
+   sftp_file file;
+   file = sftp_open(sftp,"lebron.jpg", O_WRONLY | O_TRUNC | O_CREAT, S_IRWXU);
+   sftp_write(file, buf, size);
+   sftp_close(file);
 
 	return res;
 }
@@ -491,7 +500,8 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi)
 				strftime(month, 1024, "%B", now_time);
 				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name);
 				printf("DEBUG: new_name ==> %s\n", new_name);
-				mypfs_rename(path, new_name);
+				mypfs_rename(path, new_name); 
+            
 
 			}
 		}
@@ -654,26 +664,25 @@ int main(int argc, char *argv[])
    
    // SSH Testing right here
    
-   ssh_session my_ssh_session = ssh_new();
+   my_ssh_session = ssh_new();
    // This is the the factor-3210 server
    const char *user = "unguyen3";
-   const char *host = "130.207.21.100";
    int verbosity;
-   char *password;
+   const char *password = "";
    int rc;
    
+   //Create the SSH Session First
    if (my_ssh_session == NULL)
      puts("DEBUG: my_ssh_session is NULL");
    
    ssh_options_set(my_ssh_session, SSH_OPTIONS_HOST, host);
-   ssh_options_set(my_ssh_session, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
    ssh_options_set(my_ssh_session, SSH_OPTIONS_USER, user);
    
    if(ssh_connect(my_ssh_session)){
       printf("DEBUG: Connection failed: %s\n", ssh_get_error(my_ssh_session));
    } else {
       puts("DEBUG: Successfully established SSH session");
-      password = getpass("Enter your password: ");
+      //password = getpass("Enter your password: ");
       rc = ssh_userauth_password(my_ssh_session, user, password);
       if (rc == SSH_AUTH_ERROR) {
          puts("DEBUG: Error authorizing connection");
@@ -681,17 +690,20 @@ int main(int argc, char *argv[])
          puts("DEBUG: Successfully authenticated connection");
       }
    }
-   sftp_session sftp;
+   
+   //Next, create the SFTP Session
    sftp = sftp_new(my_ssh_session);
    if (sftp == NULL) {
       puts("DEBUG: sftp connection unsuccessful");
    } else {
       puts("DEBUG: sftp connection successful");
    }
-   sftp_list_dir(my_ssh_session, sftp);
-   ssh_disconnect(my_ssh_session);   
-   ssh_free(my_ssh_session);
-   
+   //sftp_list_dir(my_ssh_session, sftp);
+   //sftp_rmdir(sftp, "Dates");
+   sftp_mkdir(sftp, "Dates", S_IRWXU);
+   //Close any remaining SFTP/SSH Sessions
+   //ssh_disconnect(my_ssh_session);   
+   //ssh_free(my_ssh_session);
    
 	return fuse_main(argc, argv, &mypfs_oper, NULL);
 }
