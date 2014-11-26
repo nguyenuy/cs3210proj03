@@ -483,7 +483,7 @@ int pull_from_sftp_server() {
 			sftp_close(file);
 			return SSH_ERROR;
 		}
-		nwritten = write(fd, buf, nbytes);
+		nwritten = write(fd, buffer, nbytes);
 		if (nwritten != nbytes) {
 			fprintf(stderr, "Error writing: %s\n", strerror(errno));
 			sftp_close(file);
