@@ -479,7 +479,7 @@ int pull_from_sftp_server() {
 		if (nbytes == 0) {
 			break; // EOF
 		} else if (nbytes < 0) {
-			fprintf(stderr, "Error while reading file: %s\n", ssh_get_error(session));
+			fprintf(stderr, "Error while reading file: %s\n", ssh_get_error(my_ssh_session));
 			sftp_close(file);
 			return SSH_ERROR;
 		}
@@ -492,7 +492,7 @@ int pull_from_sftp_server() {
 	}
 	rc = sftp_close(file);
 	if (rc != SSH_OK) {
-		fprintf(stderr, "Can't close the read file: %s\n", ssh_get_error(session));
+		fprintf(stderr, "Can't close the read file: %s\n", ssh_get_error(my_ssh_session));
 		return rc;
 	}
 	return SSH_OK;
