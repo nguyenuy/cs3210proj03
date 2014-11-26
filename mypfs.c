@@ -454,6 +454,54 @@ int upload_to_sftp_server(char *full_file_name, char *uploadName, char *upload_d
 	return 0;
 }
 
+int pull_from_sftp_server() {
+	int access_type;
+	sftp_file file;
+	char buffer[16384];
+	int nbytes, nwritten, rc;
+	int fd;
+	
+	access_type = O_RDONLY;
+	file = sftp_open(sftp, "/mypfsPics/Patern_test.jpg", access_type, 0);
+	if(file == NULL) {
+		fprintf(stderr, "Can't open file for reading: %s\n", ssh_get_error(my_ssh_session));
+		return SSH_ERROR;
+	}
+	
+	fd = open("~/fseldir/PaternTest2.jpg", O_CREAT);
+	if (fd < 0) {
+		fprintf(stderr, "Can't open file for writing: %s\n",
+		strerror(errno));
+		return SSH_ERROR;
+	}
+	for (;;) {
+		nbytes = sftp_read(file, buffer, sizeof(buffer));
+		if (nbytes == 0) {
+			break; // EOF
+		} else if (nbytes < 0) {
+			fprintf(stderr, "Error while reading file: %s\n", ssh_get_error(session));
+			sftp_close(file);
+			return SSH_ERROR;
+	}
+		nwritten = write(fd, buf, nbytes);
+		if (nwritten != nbytes) {
+			fprintf(stderr, "Error writing: %s\n", strerror(errno));
+			sftp_close(file);
+			return SSH_ERROR;
+		}
+	}
+		rc = sftp_close(file);
+		if (rc != SSH_OK) {
+			fprintf(stderr, "Can't close the read file: %s\n", ssh_get_error(session));
+			return rc;
+		}
+	return SSH_OK;
+	}
+	
+	return 0;
+		
+}
+
 /*
 From the Fuse documentation:
 
@@ -581,6 +629,7 @@ static int mypfs_opendir(const char *path, struct fuse_file_info *fi)
 
 static void* mypfs_init(struct fuse_conn_info *conn)
 {
+	pull_from_sftp_server();
 	return NULL;
 }
 
