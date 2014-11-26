@@ -584,7 +584,7 @@ int upload_to_sftp_server(char *full_file_name, char *new_file_name, char *uploa
 	//make sure there's a special directory to upload into
 	sftp_mkdir(sftp, upload_dir, S_IRWXU);
 	int filehandle = open(full_file_name,O_RDWR, 0666);
-	fileName = string_after_char(full_file_name, '/');
+	strcpy(fileName, string_after_char(full_file_name, '/'));
 	
 	sftp_file file;
 	
