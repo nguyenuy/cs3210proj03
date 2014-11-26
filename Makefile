@@ -1,5 +1,5 @@
-CFLAGS := -Wall $(shell pkg-config fuse libexif json --cflags) 
-LDFLAGS := $(shell pkg-config fuse libexif --libs)
+CFLAGS := -Wall $(shell pkg-config fuse libexif libssh --cflags) 
+LDFLAGS := $(shell pkg-config fuse libexif libssh --libs)
 
 targets = mypfs hello
 
