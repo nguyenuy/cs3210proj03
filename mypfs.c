@@ -172,6 +172,8 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* un
 	char compare_name[1024];
 	char* curr_char;
 	int n = 0;
+	
+	ext = string_after_char(path, '.');
 
 	if (*path == '/')
 		path++;
