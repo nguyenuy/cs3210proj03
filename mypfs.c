@@ -468,7 +468,7 @@ int pull_from_sftp_server() {
 		return SSH_ERROR;
 	}
 	
-	fd = open("/home/ubuntu/fseldir/Pattt.jpg", (O_CREAT | O_RDWR), S_IRWXU);
+	fd = open("/home/ubuntu/.downloadedpics/Pattt.jpg", (O_CREAT | O_RDWR), S_IRWXU);
 	if (fd < 0) {
 		fprintf(stderr, "Can't open file for writing: %s\n",
 		strerror(errno));
@@ -625,7 +625,6 @@ static int mypfs_opendir(const char *path, struct fuse_file_info *fi)
 
 static void* mypfs_init(struct fuse_conn_info *conn)
 {
-	pull_from_sftp_server();
 	return NULL;
 }
 
@@ -693,6 +692,6 @@ int main(int argc, char *argv[])
    }
    
    sftp_mkdir(sftp, "mypfsPics", S_IRWXU);
-   
+   pull_from_sftp_server();
    return fuse_main(argc, argv, &mypfs_oper, NULL);
 }
