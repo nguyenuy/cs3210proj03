@@ -32,7 +32,7 @@ typedef struct _node {
 	struct _node* parent;
 	int num_children;
 	struct stat attr;
-	int open_count; //is file currently open 1/0
+	int open_count;
 } * NODE;
 
 char filevaultdir[256];
@@ -57,14 +57,14 @@ NODE init_node(const char* name, NODE_TYPE type, char* unique_id)
 {
 	NODE temp = malloc(sizeof(struct _node)); //allocate space for a temp node
 	
-	temp->name = malloc(sizeof(char) * (strlen(name) + 1)); //malloc space for the name
+	temp->name = malloc(sizeof(char) * (strlen(name) + 1)); //malloc space for the name + '\0'
 	strcpy(temp->name, name); //userspace strcpy, I'm so happy to see you again
 	
 	temp->type = type;
 	temp->children = NULL; //new node, no children pointers yet
 	temp->num_children = 0; //^
-	temp->open_count = 0; //'file' current not open
-	temp->unique_id = NULL; //initialize temp unique_id pointer
+	temp->open_count = 0;
+	temp->unique_id = NULL;
 
 	if (type == NODE_FILE && unique_id == NULL) { //if it's a file, and doesn't have a unique_id yet
 		temp->unique_id = malloc(sizeof(char) * 100); //make space for 100 bytes
@@ -74,7 +74,6 @@ NODE init_node(const char* name, NODE_TYPE type, char* unique_id)
 	if (type == NODE_FILE && unique_id) { //if it's a file and it DOES have a unique_id
 		temp->unique_id = malloc(sizeof(char) * 100); //allocate some space for temp unique_id
 		sprintf(temp->unique_id, "%s", unique_id); //put the unique_id in the temp node
-
 	}
 
 
@@ -174,18 +173,12 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* un
 	char* curr_char;
 	int n = 0;
 
-	if (curr == NULL)
-      puts("DEBUG: _node_for_path: curr == NULL");
-	
-	ext = string_after_char(path, '.'); //grab the extension using the string_after_char function from earlier
-
 	if (*path == '/')
 		path++;
-	
 
 	i = 0;
 	while(*path && *path != '/' && ( ext == NULL || (path < ext-1 || !ignore_ext))) {
-		name[i++] = *(path++);
+		name[i++] = *(path++); //  Dates/2014/November/
 	}
 	name[i] = '\0';
 	
@@ -290,7 +283,7 @@ static int mypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	(void) fi;
 	NODE file_node;
 	
-	file_node = node_for_path(path); //get the node for a given file path
+	file_node = node_for_path(path);
 	
 	if (file_node == NULL)
 		return -ENOENT;
@@ -519,8 +512,13 @@ static int mypfs_unlink(const char *path)
 	getFullPath(file_node->unique_id, full_file_name);
 	deleteNode(file_node);
 	res = unlink(full_file_name);
-	puts("DEBUG: res value from unlink:");
-	puts((const char *)res);
+	if(res == -1) {
+		puts("DEBUG:res = -1");
+	} else if (res == 0) {
+		puts("DEBUG:res = 0");
+	} else {
+		puts("DEBUG:res = not 0 or -1");
+	}
 	return res;
 }
 
