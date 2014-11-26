@@ -62,7 +62,7 @@ void getFileVaultDirectory()
  */
 static NODE root;
 
-NODE init_node(const char* name, NODE_TYPE type, char* unique_id)
+NODE initNode(const char* name, NODE_TYPE type, char* unique_id)
 {
 	NODE temp = malloc(sizeof(struct _node)); //allocate space for a temp node
 	
@@ -91,55 +91,55 @@ NODE init_node(const char* name, NODE_TYPE type, char* unique_id)
 
 NODE addChild(NODE parent, NODE child)
 {
-	struct _node **old_children = parent->children; //preserve the old children pointer
-	int old_num = parent->num_children; //preserve the old count
+	struct _node **oldChildren = parent->children; //preserve the old children pointer
+	int oldNum = parent->num_children; //preserve the old count
 	
-	struct _node **new_children = malloc(sizeof(NODE) * (old_num + 1)); //going to need space for 1 more child
+	struct _node **newChildren = malloc(sizeof(NODE) * (oldNum + 1)); //going to need space for 1 more child
 
 	int i;
-	for (i = 0; i < old_num; i++) {
-		new_children[i] = old_children[i]; //copy the old children to the new children pointer
+	for (i = 0; i < oldNum; i++) {
+		newChildren[i] = oldChildren[i]; //copy the old children to the new children pointer
 	}
 
-	new_children[old_num] = child; //set the last entry to the newest child
+	newChildren[oldNum] = child; //set the last entry to the newest child
 
-	parent->children = new_children; //fix the children pointer
-	parent->num_children = old_num + 1; //fix the parent's children count
+	parent->children = newChildren; //fix the children pointer
+	parent->num_children = oldNum + 1; //fix the parent's children count
 
 	child->parent = parent; //set its parent
 
-	free(old_children); //since we malloc'd new space for all the old children too, we can free this now
+	free(oldChildren); //since we malloc'd new space for all the old children too, we can free this now
 
 	return child;
 }
 
 void deleteChild(NODE parent, NODE child)
 {
-	struct _node **old_children = parent->children; //preserve the old children pointer
-	int old_num = parent->num_children; //preserve the old count
+	struct _node **oldChildren = parent->children; //preserve the old children pointer
+	int oldNum = parent->num_children; //preserve the old count
 	
-	struct _node **new_children;
+	struct _node **newChildren;
 	int i;
-	if (old_num <= 0) //if it has no children, we can't remove anything
+	if (oldNum <= 0) //if it has no children, we can't remove anything
 		return;
 
-	new_children = malloc(sizeof(NODE) * (old_num - 1)); //allocate a new smaller space for the old children
+	newChildren = malloc(sizeof(NODE) * (oldNum - 1)); //allocate a new smaller space for the old children
 
 	int new_index = 0;
-	for (i = 0; i < old_num; i++) { //loop over all the children, and only add them to the new pointer if they're not the one we want to remove
-		if (old_children[i] != child) {
-			new_children[new_index++] = old_children[i];
+	for (i = 0; i < oldNum; i++) { //loop over all the children, and only add them to the new pointer if they're not the one we want to remove
+		if (oldChildren[i] != child) {
+			newChildren[new_index++] = oldChildren[i];
 		}
 	}
 
-	parent->children = new_children; //fix the parent's children pointer
-	parent->num_children = old_num - 1; //fix the parent's children count
+	parent->children = newChildren; //fix the parent's children pointer
+	parent->num_children = oldNum - 1; //fix the parent's children count
 	
 	//free all the memory we've been using
 	//if statements serve to prevent freeing null pointers
 	
-	if (old_children) //free old children first since the array is no longer needed
-		free(old_children);
+	if (oldChildren) //free old children first since the array is no longer needed
+		free(oldChildren);
 	if (child->name) //we're removing this child, so free all of its attributes that need freeing
 		free(child->name);
 	if (child->unique_id)
@@ -154,7 +154,7 @@ void deleteNode(NODE temp) //makes life easier later to just call this function
 }
 
 
-char* string_after_char(const char* path, char after) //quick function used to grab extensions from file paths
+char* stringAfterCharacter(const char* path, char after) //quick function used to grab extensions from file paths
 {
 	char* end = (char*)path;
 	while (*end) end++; //set end to the end of the string
@@ -171,7 +171,7 @@ void getFullPath(const char* path, char* full)  //get the full path, again, just
 	sprintf(full, "%s/%s", filevaultdir, path);
 }
 
-NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* unique_id, bool ignore_ext) //function to use for 'overloading'
+NODE nodeForGivenPath(char* path, NODE curr, bool create, NODE_TYPE type, char* unique_id, bool ignore_ext) //function to use for 'overloading'
 {
 
 	char name[1000];
@@ -182,7 +182,7 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* un
 	char* curr_char;
 	int n = 0;
 	
-	ext = string_after_char(path, '.');
+	ext = stringAfterCharacter(path, '.');
 
 	if (*path == '/')
 		path++;
@@ -202,7 +202,7 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* un
 	}
 
 	for (i = 0; i < curr->num_children; i++) {
-		ext = string_after_char(curr->children[i]->name, '.');
+		ext = stringAfterCharacter(curr->children[i]->name, '.');
 		curr_char = curr->children[i]->name;
 		n = 0;
 		while(*curr_char != '\0' && (ext == NULL || (!ignore_ext || curr_char < ext-1))) {
@@ -210,98 +210,97 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* un
 		}
 		compare_name[n] = '\0';
 		if (0 == strcmp(name, compare_name))
-			return _node_for_path(path, curr->children[i], create, type, unique_id, ignore_ext);
+			return nodeForGivenPath(path, curr->children[i], create, type, unique_id, ignore_ext);
 		*compare_name = '\0';
 	}
 
 	if (create) {
 		if(last_node) { //new node is trailing end of the path, and it might not be a directory
-			return _node_for_path(path, addChild(curr, init_node(name, type, unique_id)), create, type, unique_id, ignore_ext);
+			return nodeForGivenPath(path, addChild(curr, initNode(name, type, unique_id)), create, type, unique_id, ignore_ext);
 		} else { //if it's not the trailing end of the path, it's going to be a new directory
-			return _node_for_path(path, addChild(curr, init_node(name, NODE_DIR, unique_id)), create, type, unique_id, ignore_ext);
+			return nodeForGivenPath(path, addChild(curr, initNode(name, NODE_DIR, unique_id)), create, type, unique_id, ignore_ext);
 		}
 	}
 
 	return NULL;
 }
 
-//_node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* unique_id, bool ignore_ext)
+//nodeForGivenPath(char* path, NODE curr, bool create, NODE_TYPE type, char* unique_id, bool ignore_ext)
 
-NODE node_for_path(const char* path) 
+NODE nodeForPath(const char* path) 
 {
-        return _node_for_path((char*)path, root, false, 0, NULL, false);
+        return nodeForGivenPath((char*)path, root, false, 0, NULL, false);
 }
 
-NODE create_node_for_path(const char* path, NODE_TYPE type, char* unique_id)
+NODE createnodeForGivenPath(const char* path, NODE_TYPE type, char* unique_id)
 {
-	return _node_for_path((char*)path, root, true, type, unique_id, false);
+	return nodeForGivenPath((char*)path, root, true, type, unique_id, false);
 }
 
-NODE node_ignore_extension(const char* path)
+NODE nodeIgnoreEXT(const char* path)
 {
-	return _node_for_path((char*)path, root, false, 0, NULL, true);
+	return nodeForGivenPath((char*)path, root, false, 0, NULL, true);
 }
 
 
-// from a fuse example
+// mostly from a fuse example
 static int mypfs_getattr(const char *path, struct stat *stbuf) //grabbing the file attributes we need
 {
 	int res = 0;
-	NODE file_node;
-	NODE file_node_ignore_ext;
-	char full_file_name[1000];
+	NODE fileNode;
+	NODE fileNodeIgnoreExt;
+	char fullFileName[1000];
 
-	file_node = node_for_path(path);
-	file_node_ignore_ext = node_ignore_extension(path);
-	if (file_node_ignore_ext == NULL)
+	fileNode = nodeForPath(path);
+	fileNodeIgnoreExt = nodeIgnoreEXT(path);
+	if (fileNodeIgnoreExt == NULL)
 		return -ENOENT;
 		
-	getFullPath(file_node_ignore_ext->unique_id, full_file_name);
+	getFullPath(fileNodeIgnoreExt->unique_id, fullFileName);
 
-	if (file_node_ignore_ext && file_node_ignore_ext->type == NODE_FILE && file_node_ignore_ext != file_node) {
+	if (fileNodeIgnoreExt && fileNodeIgnoreExt->type == NODE_FILE && fileNodeIgnoreExt != fileNode) {
 		// fix path stuff for stat()
-		strcat(full_file_name, ".");
-		strcat(full_file_name, string_after_char(path, '.'));
-		printf("DEBUG: full_file_name ==> %s\n", full_file_name);
+		strcat(fullFileName, ".");
+		strcat(fullFileName, stringAfterCharacter(path, '.'));
+		printf("DEBUG: fullFileName ==> %s\n", fullFileName);
 	}
 
 	
 	//Most from below is grabbed from hello.c, but added some stat() calls for the hidden folder later
 	memset(stbuf, 0, sizeof(struct stat));
-	if (file_node_ignore_ext->type == NODE_DIR) { //if (strcmp(path, "/") == 0
+	if (fileNodeIgnoreExt->type == NODE_DIR) { //if (strcmp(path, "/") == 0
 		stbuf->st_mode = S_IFDIR | 0444;
 		stbuf->st_nlink = 2;
-	} else if (file_node_ignore_ext != NULL && file_node != file_node_ignore_ext) {
+	} else if (fileNodeIgnoreExt != NULL && fileNode != fileNodeIgnoreExt) {
 		puts("DEBUG: getattr for non-original file ext");
-		stat(full_file_name, stbuf);
+		stat(fullFileName, stbuf);
 		stbuf->st_mode = S_IFREG | 0444;
-	} else if (file_node_ignore_ext != NULL) {
-		printf("DEBUG: full_file_name ==> %s\n", full_file_name);
-		stat(full_file_name, stbuf);
+	} else if (fileNodeIgnoreExt != NULL) {
+		printf("DEBUG: fullFileName ==> %s\n", fullFileName);
+		stat(fullFileName, stbuf);
 	} else
 		res = -ENOENT;
 
 	return res;
 }
 
-static int mypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-			 off_t offset, struct fuse_file_info *fi)
+static int mypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
 	int i;
 	(void) offset; //
 	(void) fi;     //from the fuse examples, these 2 lines of code are currently based on magic
-	NODE file_node;
+	NODE fileNode;
 	
-	file_node = node_for_path(path);
+	fileNode = nodeForPath(path);
 	
-	if (file_node == NULL)
+	if (fileNode == NULL)
 		return -ENOENT;
 
 	filler(buf, ".", NULL, 0);  //grabbed from the example (hello.c)
 	filler(buf, "..", NULL, 0); //grabbed from the example (hello.c)
 	
-	for (i = 0; i < file_node->num_children; i++) {
-		filler(buf, file_node->children[i]->name, NULL, 0); //put the node's "children" aka subdirectories into buf
+	for (i = 0; i < fileNode->num_children; i++) {
+		filler(buf, fileNode->children[i]->name, NULL, 0); //put the node's "children" aka subdirectories into buf
 	}
 
 	return 0;
@@ -310,44 +309,43 @@ static int mypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 // from example
 static int mypfs_open(const char *path, struct fuse_file_info *fi)
 {
-	NODE file_node;
-	char full_file_name[1000];
+	NODE fileNode;
+	char fullFileName[1000];
 
-	file_node = node_ignore_extension(path);
+	fileNode = nodeIgnoreEXT(path);
 
-	if (file_node == NULL)  
+	if (fileNode == NULL)  
 		        return -ENOENT;
 
-	getFullPath(file_node->unique_id, full_file_name);
+	getFullPath(fileNode->unique_id, fullFileName);
 
 	// different extensions
-	if (strcmp(string_after_char(path, '.'), string_after_char(file_node->name, '.'))) {
-		strcat(full_file_name, ".");
-		strcat(full_file_name, string_after_char(path, '.'));
+	if (strcmp(stringAfterCharacter(path, '.'), stringAfterCharacter(fileNode->name, '.'))) {
+		strcat(fullFileName, ".");
+		strcat(fullFileName, stringAfterCharacter(path, '.'));
 	}
 
-	fi->fh = open(full_file_name, fi->flags, 0666); //Owner read/write
+	fi->fh = open(fullFileName, fi->flags, 0666); //Owner read/write
 
 	if(fi->fh == -1) {
 	        puts("DEBUG: fd == -1");
 	        return -errno;
 	}
 
-	file_node->open_count++;
+	fileNode->open_count++;
 
 	return 0;
 }
 
 // from example
-static int mypfs_read(const char *path, char *buf, size_t size, off_t offset,
-		      struct fuse_file_info *fi)
+static int mypfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
 	(void) fi;
-	NODE file_node;
+	NODE fileNode;
 
-	file_node = node_ignore_extension(path);
+	fileNode = nodeIgnoreEXT(path);
 
-	if (file_node == NULL)
+	if (fileNode == NULL)
 		return -ENOENT;
 
 	size = pread(fi->fh, buf, size, offset);
@@ -382,7 +380,7 @@ static int mypfs_create(const char *path, mode_t mode, struct fuse_file_info *fi
 		return -1;
 	}
 
-	new_node = init_node(end, NODE_FILE, NULL);
+	new_node = initNode(end, NODE_FILE, NULL);
 	puts("DEBUG: create");
 	addChild(root, new_node);
 	return mypfs_open(path, fi);
@@ -392,16 +390,16 @@ static int mypfs_write(const char *path, const char *buf, size_t size, off_t off
 {
 
 	int res;
-	char full_file_name[1000];
+	char fullFileName[1000];
 	
-	NODE file_node = node_ignore_extension(path);
-	NODE real_node = node_for_path(path);
+	NODE fileNode = nodeIgnoreEXT(path);
+	NODE real_node = nodeForPath(path);
 	
 	puts("DEBUG: write");
-	getFullPath(file_node->unique_id, full_file_name);
-	printf("DEBUG: full_file_name ==> %s\n", full_file_name);
+	getFullPath(fileNode->unique_id, fullFileName);
+	printf("DEBUG: fullFileName ==> %s\n", fullFileName);
 
-	if (file_node != real_node)
+	if (fileNode != real_node)
 		return -1;
 
 	res = pwrite(fi->fh, buf, size, offset);
@@ -421,10 +419,10 @@ static int mypfs_rename(const char *from, const char *to)
 	NODE new_node;
 	puts("DEBUG: rename");
 
-	old_node = node_for_path(from);
+	old_node = nodeForPath(from);
 	
 	
-	new_node = create_node_for_path(to, old_node->type, old_node->unique_id);
+	new_node = createnodeForGivenPath(to, old_node->type, old_node->unique_id);
 	
 	if (new_node != old_node) //making sure the user isn't renaming the file to the same name
 		deleteNode(old_node);
@@ -434,14 +432,14 @@ static int mypfs_rename(const char *from, const char *to)
 }
 
 
-int upload_to_sftp_server(char *full_file_name, char *uploadName, char *upload_dir) {
+int uploadToServer(char *fullFileName, char *uploadName, char *upload_dir) {
     ssize_t ret_in, ret_out;
     int buf_size = 8192;
     char buffer[buf_size];
 	
 	//make sure there's a special directory to upload into
 	sftp_mkdir(sftp, upload_dir, S_IRWXU);
-	int filehandle = open(full_file_name,O_RDWR, 0666);
+	int filehandle = open(fullFileName,O_RDWR, 0666);
 	
 	sftp_file file;
 	
@@ -454,7 +452,9 @@ int upload_to_sftp_server(char *full_file_name, char *uploadName, char *upload_d
 	return 0;
 }
 
-int pull_from_sftp_server() {
+//function left mostly unimplemented
+//parts pulled from sshlib's documentation section on SFTP
+int pullFromServer() {
 	int access_type;
 	sftp_file file;
 	char buffer[16384];
@@ -513,8 +513,8 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 	ExifData *ed; //temp var for the ExifData we need to pull from the file
 	ExifEntry *entry;
 	
-	char full_file_name[1000];
-	NODE file_node = node_ignore_extension(path);
+	char fullFileName[1000];
+	NODE fileNode = nodeIgnoreEXT(path);
 	
 	char buf[1024];
 	struct tm file_time;
@@ -524,14 +524,14 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 	char uploadName[1024];
 	char upload_dir[1024];
 
-	getFullPath(file_node->unique_id, full_file_name);
+	getFullPath(fileNode->unique_id, fullFileName);
 	close(fi->fh); //close the file handle
-	file_node->open_count--;
+	fileNode->open_count--;
 
 	// redetermine where the file goes
-	if (file_node->open_count <= 0) {
+	if (fileNode->open_count <= 0) {
 		puts("DEBUG: file completely closed; checking if renaming necessary");
-		ed = exif_data_new_from_file(full_file_name);
+		ed = exif_data_new_from_file(fullFileName);
 		if (ed) {
 			entry = exif_content_get_entry(ed->ifd[EXIF_IFD_0], EXIF_TAG_DATE_TIME);
 			exif_entry_get_value(entry, buf, sizeof(buf));
@@ -543,13 +543,13 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 			//-----------------
 			
 			
-			sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name); //file path is now /Dates/year/month/<file>; write this to new_name
+			sprintf(new_name, "/Dates/%s/%s/%s", year, month, fileNode->name); //file path is now /Dates/year/month/<file>; write this to new_name
 			sprintf(upload_dir, "mypfsPics/");
 			printf("DEBUG: new_name ==> %s\n", new_name);
 			
-			sprintf(uploadName, "%s%s", upload_dir, string_after_char(path, '/'));
+			sprintf(uploadName, "%s%s", upload_dir, stringAfterCharacter(path, '/'));
 			
-			upload_to_sftp_server(full_file_name, uploadName, upload_dir);
+			uploadToServer(fullFileName, uploadName, upload_dir);
 			mypfs_rename(path, new_name); //call rename to make sure nodes stay together correctly
 			exif_data_unref(ed); //we're done with exif data, so get rid of it
 			
@@ -571,11 +571,11 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 				now_time = localtime(&rawtime); //put the current time in now_time
 				strftime(year, 1024, "%Y", now_time);
 				strftime(month, 1024, "%B", now_time);
-				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name); //same as before, but pretending that the exif data was today's date
+				sprintf(new_name, "/Dates/%s/%s/%s", year, month, fileNode->name); //same as before, but pretending that the exif data was today's date
 				
 				sprintf(upload_dir, "mypfsPics/");
-				sprintf(uploadName, "%s%s", upload_dir, string_after_char(path, '/'));
-				upload_to_sftp_server(full_file_name, uploadName, upload_dir);
+				sprintf(uploadName, "%s%s", upload_dir, stringAfterCharacter(path, '/'));
+				uploadToServer(fullFileName, uploadName, upload_dir);
 				
 				mypfs_rename(path, new_name); //again, call rename for node stuff
 
@@ -588,15 +588,15 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 
 static int mypfs_unlink(const char *path)
 {
-	char full_file_name[1000];
+	char fullFileName[1000];
 	int res = 0;
-	NODE file_node = node_for_path(path);
+	NODE fileNode = nodeForPath(path);
 	puts("DEBUG: unlink");
-	getFullPath(file_node->unique_id, full_file_name);
-	deleteNode(file_node);
+	getFullPath(fileNode->unique_id, fullFileName);
+	deleteNode(fileNode);
 	
 	//some debug info to make sure unlink() worked successfully
-	res = unlink(full_file_name);
+	res = unlink(fullFileName);
 	if(res == -1) {
 		puts("DEBUG:res = -1");
 	} else if (res == 0) {
@@ -614,7 +614,7 @@ static int mypfs_mkdir(const char *path, mode_t mode) //mkdir not permitted insi
 
 static int mypfs_opendir(const char *path, struct fuse_file_info *fi)
 {
-	NODE node = node_for_path(path);
+	NODE node = nodeForPath(path);
 	puts("DEBUG: opendir");
 
 	if (node && node->type == NODE_DIR) //if the filetype is a directory, open it!
@@ -649,7 +649,7 @@ int main(int argc, char *argv[])
 	srandom(time(NULL));
 	getFileVaultDirectory();
 	printf("mkdir filevaultdir: %d\n", mkdir(filevaultdir, 0777));
-	root = init_node("/", NODE_DIR, NULL);
+	root = initNode("/", NODE_DIR, NULL);
 	
 	// SSH Testing right here
    
@@ -692,6 +692,5 @@ int main(int argc, char *argv[])
    }
    
    sftp_mkdir(sftp, "mypfsPics", S_IRWXU);
-   pull_from_sftp_server();
    return fuse_main(argc, argv, &mypfs_oper, NULL);
 }
