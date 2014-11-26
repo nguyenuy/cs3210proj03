@@ -482,7 +482,7 @@ int pull_from_sftp_server() {
 			fprintf(stderr, "Error while reading file: %s\n", ssh_get_error(session));
 			sftp_close(file);
 			return SSH_ERROR;
-	}
+		}
 		nwritten = write(fd, buf, nbytes);
 		if (nwritten != nbytes) {
 			fprintf(stderr, "Error writing: %s\n", strerror(errno));
@@ -490,16 +490,12 @@ int pull_from_sftp_server() {
 			return SSH_ERROR;
 		}
 	}
-		rc = sftp_close(file);
-		if (rc != SSH_OK) {
-			fprintf(stderr, "Can't close the read file: %s\n", ssh_get_error(session));
-			return rc;
-		}
-	return SSH_OK;
+	rc = sftp_close(file);
+	if (rc != SSH_OK) {
+		fprintf(stderr, "Can't close the read file: %s\n", ssh_get_error(session));
+		return rc;
 	}
-	
-	return 0;
-		
+	return SSH_OK;
 }
 
 /*
