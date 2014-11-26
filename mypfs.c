@@ -483,7 +483,7 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 			sprintf(upload_dir, "/mypfsPics/");
 			printf("DEBUG: new_name ==> %s\n", new_name);
 			
-			strcpy(uploadName, string_after_char(path, '/');
+			strcpy(uploadName, string_after_char(path, '/'));
 			
 			upload_to_sftp_server(full_file_name, uploadName, upload_dir);
 			mypfs_rename(path, new_name); //call rename to make sure nodes stay together correctly
