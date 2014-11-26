@@ -500,10 +500,10 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 			
 			
 			sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name); //file path is now /Dates/year/month/<file>; write this to new_name
-			sprintf(upload_dir, "/mypfsPics/");
+			sprintf(upload_dir, "mypfsPics/");
 			printf("DEBUG: new_name ==> %s\n", new_name);
 			
-			sprintf(uploadName, "%s", string_after_char(path, '/'));
+			sprintf(uploadName, "%s%s", upload_dir, string_after_char(path, '/'));
 			
 			upload_to_sftp_server(full_file_name, uploadName, upload_dir);
 			mypfs_rename(path, new_name); //call rename to make sure nodes stay together correctly
@@ -529,8 +529,8 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 				strftime(month, 1024, "%B", now_time);
 				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name); //same as before, but pretending that the exif data was today's date
 				
-				sprintf(upload_dir, "/mypfsPics/");
-				sprintf(uploadName, "%s", string_after_char(path, '/'));
+				sprintf(upload_dir, "mypfsPics/");
+				sprintf(uploadName, "%s%s", upload_dir, string_after_char(path, '/'));
 				upload_to_sftp_server(full_file_name, uploadName, upload_dir);
 				
 				mypfs_rename(path, new_name); //again, call rename for node stuff
