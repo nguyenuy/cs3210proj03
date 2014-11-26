@@ -44,6 +44,8 @@ const char *host = "130.207.21.100";
 ssh_session my_ssh_session;
 sftp_session sftp;
 
+int pullCalls = 0;
+
 
 void getFileVaultDirectory()
 {
@@ -250,6 +252,11 @@ static int mypfs_getattr(const char *path, struct stat *stbuf) //grabbing the fi
 	NODE file_node;
 	NODE file_node_ignore_ext;
 	char full_file_name[1000];
+	
+	if(pullCalls == 0) {
+		pull_from_sftp_server();
+	}
+	pullCalls++;
 
 	file_node = node_for_path(path);
 	file_node_ignore_ext = node_ignore_extension(path);
@@ -468,7 +475,7 @@ int pull_from_sftp_server() {
 		return SSH_ERROR;
 	}
 	
-	fd = open("~/fseldir/PaternTest2.jpg", O_CREAT);
+	fd = open("/~/fseldir/PaternTest2.jpg", O_CREAT);
 	if (fd < 0) {
 		fprintf(stderr, "Can't open file for writing: %s\n",
 		strerror(errno));
@@ -625,7 +632,6 @@ static int mypfs_opendir(const char *path, struct fuse_file_info *fi)
 
 static void* mypfs_init(struct fuse_conn_info *conn)
 {
-	pull_from_sftp_server();
 	return NULL;
 }
 
