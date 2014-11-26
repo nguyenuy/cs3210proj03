@@ -205,8 +205,6 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* un
 		*compare_name = '\0';
 	}
 
-	
-	// sorry about this weird line
 	if (create) {
 		return _node_for_path(path, addChild(curr, init_node(name, last_node ? type : NODE_DIR, unique_id)), create, type, unique_id, ignore_ext);
 	}
@@ -519,7 +517,7 @@ static int mypfs_unlink(const char *path)
 	} else if (res == 0) {
 		puts("DEBUG:res = 0");
 	} else {
-		puts("DEBUG:res = not 0 or -1");
+		puts("DEBUG:res = not 0 or -1, something broke");
 	}
 	return res;
 }
