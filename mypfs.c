@@ -457,6 +457,7 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 	char year[1024];
 	char month[1024];
 	char new_name[2048];
+	char uploadName[1024];
 	char upload_dir[1024];
 
 	getFullPath(file_node->unique_id, full_file_name);
@@ -479,10 +480,12 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 			
 			
 			sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name); //file path is now /Dates/year/month/<file>; write this to new_name
-			sprintf(upload_dir, "mypfsPics/");
+			sprintf(upload_dir, "/mypfsPics/");
 			printf("DEBUG: new_name ==> %s\n", new_name);
 			
-			upload_to_sftp_server(full_file_name, new_name, upload_dir);
+			strcpy(uploadName, string_after_char(path, '/');
+			
+			upload_to_sftp_server(full_file_name, uploadName, upload_dir);
 			mypfs_rename(path, new_name); //call rename to make sure nodes stay together correctly
 			exif_data_unref(ed); //we're done with exif data, so get rid of it
 			
@@ -506,7 +509,7 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 				strftime(month, 1024, "%B", now_time);
 				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name); //same as before, but pretending that the exif data was today's date
 				
-				sprintf(upload_dir, "mypfsPics/");
+				sprintf(upload_dir, "/mypfsPics/");
 				upload_to_sftp_server(full_file_name, new_name, upload_dir);
 				
 				mypfs_rename(path, new_name); //again, call rename for node stuff
@@ -575,21 +578,19 @@ static struct fuse_operations mypfs_oper = {
 	.init		= mypfs_init,
 };
 
-int upload_to_sftp_server(char *full_file_name, char *new_file_name, char *upload_dir) {
+int upload_to_sftp_server(char *full_file_name, char *uploadName, char *upload_dir) {
     ssize_t ret_in, ret_out;
     int buf_size = 8192;
     char buffer[buf_size];
-	char fileName[256];
 	
 	//make sure there's a special directory to upload into
 	sftp_mkdir(sftp, upload_dir, S_IRWXU);
 	int filehandle = open(full_file_name,O_RDWR, 0666);
-	strcpy(fileName, string_after_char(full_file_name, '/'));
 	
 	sftp_file file;
 	
 	new_file_name++;
-	file = sftp_open(sftp, fileName, O_WRONLY | O_TRUNC | O_CREAT | O_APPEND, S_IRWXU);
+	file = sftp_open(sftp, uploadName, O_WRONLY | O_TRUNC | O_CREAT | O_APPEND, S_IRWXU);
 	while ((ret_in = read(filehandle, &buffer, buf_size)) > 0) {  
 		sftp_write(file, &buffer, (size_t) ret_in);
 	}
