@@ -519,7 +519,8 @@ static int mypfs_unlink(const char *path)
 	getFullPath(file_node->unique_id, full_file_name);
 	deleteNode(file_node);
 	res = unlink(full_file_name);
-	printf("DEBUG: res value from unlink: %d", res);
+	puts("DEBUG: res value from unlink:");
+	puts((const char *)res);
 	return res;
 }
 
