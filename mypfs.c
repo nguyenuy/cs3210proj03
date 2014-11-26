@@ -3,8 +3,8 @@
 */
 
 #define FUSE_USE_VERSION 29
-#define __USE_XOPEN
-#define _GNU_SOURCE
+#define __USE_XOPEN //fixes a bug
+#define _GNU_SOURCE //fixes the same bug, just gonna leave it in since it doesn't seem to break anything
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -21,6 +21,8 @@
 #include <pwd.h>
 #include <sys/types.h>
 #include <dirent.h>
+#include <libssh/libssh.h>
+#include <libssh/sftp.h>
 
 typedef enum {NODE_DIR, NODE_FILE} NODE_TYPE; //NODE_DIR == 0 / NODE_FILE == 1
 
@@ -37,6 +39,12 @@ typedef struct _node {
 
 char filevaultdir[256];
 
+// Used for SFTP Session with factor-controller.cc.gatech.edu
+const char *host = "130.207.21.100";
+ssh_session my_ssh_session;
+sftp_session sftp;
+
+
 void getFileVaultDirectory()
 {
 	struct passwd pw;
@@ -47,6 +55,29 @@ void getFileVaultDirectory()
 	strcpy(filevaultdir, pw.pw_dir); //base directory
 	strcat(filevaultdir, "/.mypics");  //hidden representation on user home directory
 }
+
+int upload_to_sftp_server(char *full_file_name, char *new_file_name, char *upload_dir) {
+    ssize_t ret_in, ret_out;
+    int buf_size = 8192;
+    char buffer[buf_size];
+	char fileName[256];
+	
+	//make sure there's a special directory to upload into
+	sftp_mkdir(sftp, upload_dir, S_IRWXU);
+	int filehandle = open(full_file_name,O_RDWR, 0666);
+	fileName = string_after_char(full_file_name, '/');
+	
+	sftp_file file;
+	
+	new_file_name++;
+	file = sftp_open(sftp, fileName, O_WRONLY | O_TRUNC | O_CREAT | O_APPEND, S_IRWXU);
+	while ((ret_in = read(filehandle, &buffer, buf_size)) > 0) {  
+		sftp_write(file, &buffer, (size_t) ret_in);
+	}
+	sftp_close(file);
+	close(filehandle);
+}
+
 
 /*
  * Root of file system
@@ -180,7 +211,7 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* un
 
 	i = 0;
 	while(*path && *path != '/' && ( ext == NULL || (path < ext-1 || !ignore_ext))) {
-		name[i++] = *(path++); //  Dates/2014/November/
+		name[i++] = *(path++);
 	}
 	name[i] = '\0';
 	
@@ -206,7 +237,11 @@ NODE _node_for_path(char* path, NODE curr, bool create, NODE_TYPE type, char* un
 	}
 
 	if (create) {
-		return _node_for_path(path, addChild(curr, init_node(name, last_node ? type : NODE_DIR, unique_id)), create, type, unique_id, ignore_ext);
+		if(last_node) { //new node is trailing end of the path, and it might not be a directory
+			return _node_for_path(path, addChild(curr, init_node(name, type, unique_id)), create, type, unique_id, ignore_ext);
+		} else { //if it's not the trailing end of the path, it's going to be a new directory
+			return _node_for_path(path, addChild(curr, init_node(name, NODE_DIR, unique_id)), create, type, unique_id, ignore_ext);
+		}
 	}
 
 	return NULL;
@@ -246,10 +281,6 @@ static int mypfs_getattr(const char *path, struct stat *stbuf) //grabbing the fi
 	getFullPath(file_node_ignore_ext->unique_id, full_file_name);
 
 	if (file_node_ignore_ext && file_node_ignore_ext->type == NODE_FILE && file_node_ignore_ext != file_node) {
-		// convert here, so file 1324242 becomes 1324242.png
-		puts("DEBUG: EXTENSION DOESN'T MATCH; NEED TO CONVERT");
-		//convert_img(file_node_ignore_ext, path);
-		
 		// fix path stuff for stat()
 		strcat(full_file_name, ".");
 		strcat(full_file_name, string_after_char(path, '.'));
@@ -279,8 +310,8 @@ static int mypfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 			 off_t offset, struct fuse_file_info *fi)
 {
 	int i;
-	(void) offset;
-	(void) fi;
+	(void) offset; //
+	(void) fi;     //from the fuse examples, these 2 lines of code are currently based on magic
 	NODE file_node;
 	
 	file_node = node_for_path(path);
@@ -448,9 +479,10 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 	char year[1024];
 	char month[1024];
 	char new_name[2048];
+	char upload_dir[1024];
 
 	getFullPath(file_node->unique_id, full_file_name);
-	close(fi->fh); //close the file handle"
+	close(fi->fh); //close the file handle
 	file_node->open_count--;
 
 	// redetermine where the file goes
@@ -469,9 +501,10 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 			
 			
 			sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name); //file path is now /Dates/year/month/<file>; write this to new_name
+			sprintf(upload_dir, "mypfsPics/");
 			printf("DEBUG: new_name ==> %s\n", new_name);
 			
-			
+			upload_to_sftp_server(full_file_name, new_name, upload_dir);
 			mypfs_rename(path, new_name); //call rename to make sure nodes stay together correctly
 			exif_data_unref(ed); //we're done with exif data, so get rid of it
 			
@@ -494,6 +527,10 @@ static int mypfs_release(const char *path, struct fuse_file_info *fi) //basicall
 				strftime(year, 1024, "%Y", now_time);
 				strftime(month, 1024, "%B", now_time);
 				sprintf(new_name, "/Dates/%s/%s/%s", year, month, file_node->name); //same as before, but pretending that the exif data was today's date
+				
+				sprintf(upload_dir, "mypfsPics/");
+				upload_to_sftp_server(full_file_name, new_name, upload_dir);
+				
 				mypfs_rename(path, new_name); //again, call rename for node stuff
 
 			}
@@ -511,6 +548,8 @@ static int mypfs_unlink(const char *path)
 	puts("DEBUG: unlink");
 	getFullPath(file_node->unique_id, full_file_name);
 	deleteNode(file_node);
+	
+	//some debug info to make sure unlink() worked successfully
 	res = unlink(full_file_name);
 	if(res == -1) {
 		puts("DEBUG:res = -1");
@@ -519,7 +558,7 @@ static int mypfs_unlink(const char *path)
 	} else {
 		puts("DEBUG:res = not 0 or -1, something broke");
 	}
-	return res;
+	return res; //if this is -1, something went wrong with unlink()
 }
 
 static int mypfs_mkdir(const char *path, mode_t mode) //mkdir not permitted inside the FS to preserve folder integrity
@@ -535,7 +574,7 @@ static int mypfs_opendir(const char *path, struct fuse_file_info *fi)
 	if (node && node->type == NODE_DIR) //if the filetype is a directory, open it!
 		return 0;
 
-	return -1; //trying to open a 'file' that isn't a directory won't work
+	return -1; //trying to open something that isn't a directory throws an "Operation not supported" error
 }
 
 static void* mypfs_init(struct fuse_conn_info *conn)
@@ -566,5 +605,47 @@ int main(int argc, char *argv[])
 	printf("mkdir filevaultdir: %d\n", mkdir(filevaultdir, 0777));
 	root = init_node("/", NODE_DIR, NULL);
 	
-	return fuse_main(argc, argv, &mypfs_oper, NULL);
+	// SSH Testing right here
+   
+   my_ssh_session = ssh_new();
+   // This is the the factor-3210 server
+   //const char *user = "unguyen3";
+   //const char *password = "";
+   char user[256];
+   const char *password;
+   printf("Input a username: ");
+   scanf("%s", &user);
+   int rc;
+   
+   //Create the SSH Session First
+	if (my_ssh_session == NULL)
+		puts("DEBUG: my_ssh_session is NULL");
+   
+   ssh_options_set(my_ssh_session, SSH_OPTIONS_HOST, host);
+   ssh_options_set(my_ssh_session, SSH_OPTIONS_USER, user);
+   
+   if(ssh_connect(my_ssh_session)){
+		printf("DEBUG: Connection failed: %s\n", ssh_get_error(my_ssh_session));
+   } else {
+		puts("DEBUG: Successfully established SSH session");
+		password = getpass("Enter your password: ");
+		rc = ssh_userauth_password(my_ssh_session, user, password);
+		if (rc == SSH_AUTH_ERROR) {
+			puts("DEBUG: Error authorizing connection");
+		} else {
+			puts("DEBUG: Successfully authenticated connection");
+		}
+   }
+   
+   //Next, create the SFTP Session
+   sftp = sftp_new(my_ssh_session);
+   if (sftp == NULL) {
+		puts("DEBUG: sftp connection unsuccessful");
+   } else {
+		puts("DEBUG: sftp connection successful");
+   }
+   
+   sftp_mkdir(sftp, "mypfsPics", S_IRWXU);
+   
+   return fuse_main(argc, argv, &mypfs_oper, NULL);
 }
